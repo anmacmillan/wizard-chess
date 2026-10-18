@@ -310,6 +310,7 @@
     <div class="gcode" id="gcode"></div>
     <div class="sub" id="houseLabel" style="margin-top:4px">Your house</div>
     <div class="hrow" id="houseRow"></div>
+    <button class="btn ghost" data-act="pieces" id="piecesBtn">Pieces: heroes</button>
     <button class="btn ghost" data-act="flip">Turn the board round</button>
     <button class="btn ghost" data-act="copy">Copy the game link</button>
     <button class="btn ghost" data-act="pp" id="ppBtn"></button>
@@ -386,8 +387,8 @@ if (pCode) {
   addEventListener('pagehide', backupNow);
   document.addEventListener('visibilitychange', () => { if (document.hidden) backupNow(); });
 }
-const prefs = Object.assign({ sound: true, voice: true, coach: true, name: '', house: 'G', oppHouse: 'S' }, store.get('wc:prefs', {}));
-const board3d = new Board3D(document.getElementById('board'), { onTap: sq => { unlockAudio(); handleTap(sq); }, sfx: (n, a) => sfx(n, a) });
+const prefs = Object.assign({ sound: true, voice: true, coach: true, pieces: 'heroes', name: '', house: 'G', oppHouse: 'S' }, store.get('wc:prefs', {}));
+const board3d = new Board3D(document.getElementById('board'), { style: prefs.pieces, onTap: sq => { unlockAudio(); handleTap(sq); }, sfx: (n, a) => sfx(n, a) });
 const savePrefs = () => store.set('wc:prefs', prefs);
 
 // ---------- state ----------
@@ -918,6 +919,7 @@ document.addEventListener('click', async e => {
     case 'log': if (G) { showMoves(); $('#log').classList.add('show'); } break;
     case 'menu': if (G) { resignArmed = false; menuLabels(); menuHouses(); $('#gcode').innerHTML = DB ? `Game code <b>${esc(G.id)}</b>` : ''; $('#menu').classList.add('show'); } break;
     case 'close': closeAll(); break;
+    case 'pieces': prefs.pieces = prefs.pieces === 'heroes' ? 'classic' : 'heroes'; savePrefs(); board3d.setStyle(prefs.pieces); menuLabels(); break;
     case 'flip': orient = other(orient); closeAll(); render(); break;
     case 'copy': closeAll(); if (await copyText(urlOf())) toast('Link copied.'); break;
     case 'pp':
@@ -948,6 +950,7 @@ $('#houseRow').addEventListener('click', async e => {
   if (DB && !passPlay) dbPut();
 });
 function menuLabels() {
+  $('#piecesBtn').textContent = prefs.pieces === 'heroes' ? '♞ Pieces: animated heroes (tap for classic)' : '♞ Pieces: classic (tap for heroes)';
   $('#ppBtn').textContent = passPlay ? 'Play by owl post instead' : 'Both players on this iPad';
   $('#resignBtn').textContent = 'Resign';
   $('#resignBtn').style.display = isOver() ? 'none' : '';

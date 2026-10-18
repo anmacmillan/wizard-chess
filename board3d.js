@@ -8,6 +8,34 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from './RoomEnvironment.js';
+import { GLTFLoader } from './jsm/loaders/GLTFLoader.js';
+import * as SkeletonUtils from './jsm/utils/SkeletonUtils.js';
+
+// Heroes: animated fantasy characters by Quaternius (RPG Character Pack) as the pieces
+const HERO = {
+  p: { file: 'Rogue', h: 1.0, attack: 'Dagger_Attack', ready: 'Attacking_Idle' },
+  n: { file: 'Warrior', h: 1.2, attack: 'Sword_Attack', ready: 'Idle_Attacking', jump: 'Roll' },
+  b: { file: 'Cleric', h: 1.25, attack: 'Staff_Attack', ready: 'Idle_Weapon' },
+  r: { file: 'Monk', h: 1.2, attack: 'Attack', ready: 'Idle_Attacking' },
+  q: { file: 'Ranger', h: 1.3, attack: 'Bow_Shoot', ready: 'Idle_Attacking' },
+  k: { file: 'Wizard', h: 1.4, attack: 'Spell1', ready: 'Idle_Attacking' },
+};
+const GLYPH = { w: { k: '♔', q: '♕', r: '♖', b: '♗', n: '♘', p: '♙' }, b: { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' } };
+const glyphTex = {};
+function glyphMaterial(color, type) {
+  const k = color + type;
+  if (!glyphTex[k]) {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.fillStyle = color === 'w' ? '#f6efe0' : '#1b1820'; g.beginPath(); g.arc(64, 64, 60, 0, Math.PI * 2); g.fill();
+    g.lineWidth = 7; g.strokeStyle = '#d8a945'; g.stroke();
+    g.fillStyle = color === 'w' ? '#2a2230' : '#f6efe0'; g.font = '84px "Apple Symbols","Segoe UI Symbol",serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(GLYPH[color][type] + '\uFE0E', 64, 70);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    glyphTex[k] = new THREE.SpriteMaterial({ map: t, depthTest: true });
+  }
+  return glyphTex[k];
+}
 
 const sqPos = sq => new THREE.Vector3(sq.charCodeAt(0) - 97 - 3.5, 0, 4.5 - +sq[1]);
 const ease = p => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
@@ -245,6 +273,11 @@ export class Board3D {
     this.debris = [];
     this.shake = 0;
     this.selected = null;
+    this.style = hooks.style || 'heroes';
+    this.mixers = new Set();
+    this.heroTpl = null;
+    this.lastBoard = null;
+    this.loadHeroes();
 
     const r = this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -444,10 +477,77 @@ export class Board3D {
     this.tween(1400, p => { this.view.theta = from + (to - from) * ease(p); });
   }
 
+  async loadHeroes() {
+    try {
+      const L = new GLTFLoader(), tpl = {};
+      await Promise.all(Object.entries(HERO).map(async ([t, cfg]) => { tpl[t] = await L.loadAsync(`models/${cfg.file}.glb`); }));
+      this.heroTpl = tpl;
+      if (this.style === 'heroes' && this.lastBoard) this.setPosition(this.lastBoard);
+    } catch (e) { console.warn('heroes failed to load, using classic pieces', e); }
+  }
+  setStyle(style) {
+    this.style = style;
+    if (this.lastBoard) this.setPosition(this.lastBoard);
+  }
+  useHeroes() { return this.style === 'heroes' && this.heroTpl; }
+
+  buildHero(type, color) {
+    const cfg = HERO[type], src = this.heroTpl[type];
+    const group = new THREE.Group();
+    // the base: marble or obsidian with gold, like the classic pieces
+    const body = color === 'w' ? M.white : M.black;
+    group.add(mesh(lathe('base', BASE), body));
+    ring(group, 0.345, 0.075, 0.022);
+    const model = SkeletonUtils.clone(src.scene);
+    model.scale.setScalar(cfg.h / 3.1);
+    model.position.y = 0.13;
+    model.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = true; o.receiveShadow = true;
+      o.material = o.material.clone();
+      if (color === 'b') { o.material.color.multiplyScalar(0.26); o.material.color.lerp(new THREE.Color(0x2a1640), 0.25); if (o.material.emissive) o.material.emissive.setHex(0x0c0616); }
+      else { o.material.color.lerp(new THREE.Color(0xfff4e0), 0.35); if (o.material.emissive) o.material.emissive.setHex(0x1a140c); }
+      o.material.envMapIntensity = 0.5;
+    });
+    model.rotation.y = color === 'w' ? Math.PI : 0;     // face the other side
+    group.add(model);
+    // a small badge with the chess symbol, so the girls still learn which piece is which
+    const badge = new THREE.Sprite(glyphMaterial(color, type));
+    badge.scale.setScalar(0.24); badge.position.set(0.26, 0.24, 0.26);
+    group.add(badge);
+    const mixer = new THREE.AnimationMixer(model);
+    const clips = Object.fromEntries(src.animations.map(c => [c.name, c]));
+    group.userData.hero = { mixer, clips, model, cfg, color, current: null };
+    this.mixers.add(mixer);
+    this.play(group, 'Idle', { offset: Math.random() * 3 });
+    return group;
+  }
+  // crossfade to an animation; once: true plays it one time and holds the last frame
+  play(g, name, { once = false, fade = 0.22, offset = 0, speed = 1 } = {}) {
+    const H = g.userData.inner && g.userData.inner.userData.hero || g.userData.hero;
+    if (!H || !H.clips[name]) return 0;
+    const a = H.mixer.clipAction(H.clips[name]);
+    a.reset(); a.timeScale = speed;
+    a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity); a.clampWhenFinished = once;
+    if (offset) a.time = offset % H.clips[name].duration;
+    a.play();
+    if (H.current && H.current !== a) H.current.crossFadeTo(a, fade, false);
+    H.current = a;
+    return H.clips[name].duration / speed;
+  }
+  heroOf(g) { return g && g.userData.inner && g.userData.inner.userData.hero; }
+  face(g, dir) {   // turn the character to walk towards dir (or back to its side when dir is null)
+    const H = this.heroOf(g); if (!H) return;
+    const target = dir ? Math.atan2(dir.x, dir.z) : (H.color === 'w' ? Math.PI : 0);
+    const from = H.model.rotation.y; let to = target;
+    while (to - from > Math.PI) to -= Math.PI * 2; while (from - to > Math.PI) to += Math.PI * 2;
+    this.tween(220, p => { H.model.rotation.y = from + (to - from) * ease(p); });
+  }
+
   // ---------- pieces ----------
   makePiece(type, color, sq) {
     const outer = new THREE.Group();
-    const inner = buildPiece(type, color);
+    const inner = this.useHeroes() ? this.buildHero(type, color) : buildPiece(type, color);
     outer.add(inner);
     outer.userData = { sq, type, color, inner };
     outer.position.copy(sqPos(sq));
@@ -456,7 +556,8 @@ export class Board3D {
   }
 
   setPosition(board) {
-    for (const g of this.pieces.values()) this.scene.remove(g);
+    this.lastBoard = board;
+    for (const g of this.pieces.values()) { this.scene.remove(g); const H = this.heroOf(g); if (H) this.mixers.delete(H.mixer); }
     this.pieces.clear();
     for (const row of board) for (const p of row) if (p) this.pieces.set(p.square, this.makePiece(p.type, p.color, p.square));
     this.applyLift();
@@ -481,7 +582,14 @@ export class Board3D {
     this.applyLift();
   }
   applyLift() {
-    for (const [sq, g] of this.pieces) g.userData.lift = sq === this.selected ? 0.18 : 0;
+    for (const [sq, g] of this.pieces) {
+      const H = this.heroOf(g);
+      if (H) {   // heroes take up a fighting stance instead of floating
+        const want = sq === this.selected ? H.cfg.ready : 'Idle';
+        if (g.userData.stance !== want) { g.userData.stance = want; this.play(g, want); }
+        g.userData.lift = 0;
+      } else g.userData.lift = sq === this.selected ? 0.18 : 0;
+    }
   }
 
   tween(ms, fn) {
@@ -498,6 +606,7 @@ export class Board3D {
   async animateMove(mv) {
     const g = this.pieces.get(mv.from);
     if (!g) return;
+    if (this.heroOf(g)) return this.animateHero(mv, g);
     const a = sqPos(mv.from), b = sqPos(mv.to);
     this.pieces.delete(mv.from);
     g.userData.lift = 0;
@@ -553,11 +662,75 @@ export class Board3D {
 
     if (mv.promotion) {   // the pawn becomes a new piece in a flash of light
       g.remove(g.userData.inner);
-      g.userData.inner = buildPiece(mv.promotion, mv.color);
+      g.userData.inner = this.useHeroes() ? this.buildHero(mv.promotion, mv.color) : buildPiece(mv.promotion, mv.color);
       g.add(g.userData.inner);
       this.flash(b, 0xfff0b0, 60);
       await this.tween(500, p => { g.scale.setScalar(1 + Math.sin(Math.PI * p) * 0.35); });
       g.scale.setScalar(1);
+    }
+  }
+
+  async animateHero(mv, g) {
+    const a = sqPos(mv.from), b = sqPos(mv.to);
+    this.pieces.delete(mv.from); g.userData.stance = null;
+    const victimSq = mv.isEnPassant() ? mv.to[0] + mv.from[1] : mv.captured ? mv.to : null;
+    const victim = victimSq ? this.pieces.get(victimSq) : null;
+    if (victimSq) this.pieces.delete(victimSq);
+    const H = this.heroOf(g);
+    const walk = async (from, to, jump) => {
+      const d = from.distanceTo(to); if (d < 0.05) return;
+      this.face(g, to.clone().sub(from));
+      const run = d > 2.2 && !jump;
+      this.play(g, jump ? H.cfg.jump || 'Roll' : run ? 'Run' : 'Walk', { speed: jump ? 1.1 : 1 });
+      await this.glide(g, from, to, jump ? 900 : Math.min(1600, d * (run ? 260 : 420)), !!jump);
+    };
+    let rookDone = null;
+    if (mv.isKingsideCastle() || mv.isQueensideCastle()) {
+      const rk = mv.from[1], ks = mv.isKingsideCastle();
+      const rf = (ks ? 'h' : 'a') + rk, rt = (ks ? 'f' : 'd') + rk, rg = this.pieces.get(rf);
+      if (rg) {
+        this.pieces.delete(rf); rg.userData.sq = rt; this.pieces.set(rt, rg);
+        this.face(rg, sqPos(rt).sub(sqPos(rf))); this.play(rg, 'Walk');
+        rookDone = this.glide(rg, sqPos(rf), sqPos(rt), 1100, false).then(() => { this.face(rg, null); this.play(rg, 'Idle'); });
+      }
+    }
+    this.hooks.sfx && this.hooks.sfx(mv.isKingsideCastle() || mv.isQueensideCastle() ? 'castle' : 'piece', mv.piece);
+    if (victim) {
+      // the fight: walk up, attack, the victim is hit and falls, then crumbles to rubble
+      const vp = victim.position.clone();
+      const dir = vp.clone().sub(a).setY(0).normalize();
+      const stop = vp.clone().addScaledVector(dir, -0.72);
+      await walk(a, stop, mv.piece === 'n');
+      this.face(g, dir); this.face(victim, dir.clone().negate());
+      this.hooks.sfx && this.hooks.sfx('battlecry');
+      const atk = this.play(g, H.cfg.attack, { once: true, fade: 0.12 });
+      await new Promise(r => setTimeout(r, atk * 520));
+      this.hooks.sfx && this.hooks.sfx('strike');
+      this.play(victim, 'RecieveHit', { once: true, fade: 0.08 });
+      await new Promise(r => setTimeout(r, 380));
+      const die = this.play(victim, 'Death', { once: true, fade: 0.15 });
+      await new Promise(r => setTimeout(r, die * 1000 + 150));
+      this.play(g, 'Idle');
+      const VH = this.heroOf(victim); if (VH) this.mixers.delete(VH.mixer);
+      this.smash(victim, dir);
+      await new Promise(r => setTimeout(r, 250));
+      await walk(g.position.clone().setY(0), b, false);
+    } else {
+      await walk(a, b, mv.piece === 'n');
+    }
+    if (rookDone) await rookDone;
+    g.position.copy(b);
+    g.userData.sq = mv.to; this.pieces.set(mv.to, g);
+    if (mv.promotion) {
+      this.mixers.delete(H.mixer);
+      g.remove(g.userData.inner);
+      g.userData.inner = this.buildHero(mv.promotion, mv.color);
+      g.add(g.userData.inner);
+      this.flash(b, 0xfff0b0, 60);
+      await this.tween(500, p => { g.scale.setScalar(1 + Math.sin(Math.PI * p) * 0.35); });
+      g.scale.setScalar(1);
+    } else {
+      this.face(g, null); this.play(g, 'Idle');
     }
   }
 
@@ -599,6 +772,7 @@ export class Board3D {
   topple(sq) {
     const g = this.pieces.get(sq);
     if (!g) return;
+    if (this.heroOf(g)) { setTimeout(() => { this.play(g, 'Death', { once: true }); setTimeout(() => { this.shake = 0.08; this.hooks.sfx && this.hooks.sfx('thud'); }, 900); }, 300); return; }
     const axis = new THREE.Vector3(rnd(-1, 1), 0, rnd(-1, 1)).normalize();
     const q = new THREE.Quaternion();
     setTimeout(() => {
@@ -619,6 +793,7 @@ export class Board3D {
       if (p >= 1) { t.resolve(); return false; }
       return true;
     });
+    for (const m of this.mixers) m.update(dt);
     for (const g of this.pieces.values()) {   // the selected piece floats and bobs
       const lift = g.userData.lift || 0;
       g.userData.cur = THREE.MathUtils.lerp(g.userData.cur || 0, lift, 0.18);

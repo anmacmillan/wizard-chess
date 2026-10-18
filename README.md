@@ -21,3 +21,4 @@ Put the Realtime Database URL in `firebase-config.js`. Database rules (`database
 
 - Chess rules: [chess.js](https://github.com/jhlywa/chess.js) 1.0.0, BSD 2-Clause (licence header in `chess.js`).
 - Pieces: "cburnett" set by [Colin M.L. Burnett](https://en.wikipedia.org/wiki/User:Cburnett), GPLv2+, via [Lichess](https://github.com/lichess-org/lila).
+- Hero pieces: RPG Character Pack by [Quaternius](https://quaternius.com) (Quaternius Asset License: free to use in games, not to be redistributed as assets). Converted from glTF to GLB in `models/`.
