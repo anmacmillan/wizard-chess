@@ -275,9 +275,23 @@
         <button class="choice" data-v="b">Black</button>
       </div>
     </div>
-    <div class="field"><label for="oppName">Your opponent</label><input type="text" id="oppName" maxlength="20" autocomplete="off" placeholder="Dad"></div>
+    <div class="field"><label>Play against</label>
+      <div class="choices two" id="vs">
+        <button class="choice on" data-v="friend">👫 A friend</button>
+        <button class="choice" data-v="bot">🤖 The computer</button>
+      </div>
+    </div>
+    <div class="field" id="botField" style="display:none"><label>How clever?</label>
+      <div class="choices" id="botLevel">
+        <button class="choice on" data-v="1">🐣 Owlet<br><small>very easy</small></button>
+        <button class="choice" data-v="2">🧚 Pixie<br><small>easy</small></button>
+        <button class="choice" data-v="3">🧙 Wizard<br><small>tricky</small></button>
+        <button class="choice" data-v="4">🐉 Dragon<br><small>super hard</small></button>
+      </div>
+    </div>
+    <div class="field friendOnly"><label for="oppName">Your opponent</label><input type="text" id="oppName" maxlength="20" autocomplete="off" placeholder="Dad"></div>
     <div class="field"><label>Their house</label><div class="choices" id="oppHouse"></div></div>
-    <label class="check-row"><input type="checkbox" id="ppBox"> Both players on this iPad</label>
+    <label class="check-row friendOnly"><input type="checkbox" id="ppBox"> Both players on this iPad</label>
     <button class="btn" style="width:100%" id="beginBtn">Begin the game</button>
     <button class="btn ghost" style="width:100%;margin-top:10px" data-act="lessons">🎓 Lessons with Professor Owl</button>
     <div class="games" id="joinBox">
@@ -417,6 +431,7 @@ function parseHash() {
     w: { n: (p.get('wn') || 'White').slice(0, 20), h: house(p.get('wh')) },
     b: { n: (p.get('bn') || 'Black').slice(0, 20), h: house(p.get('bh')) },
     r: p.get('r') === 'w' || p.get('r') === 'b' ? p.get('r') : null,
+    bot: BOTS[+p.get('bot')] ? +p.get('bot') : 0,
     // promotions are capitals (e7e8Q) so they can't be confused with the next move's file letter
     moves: (p.get('m') || '').match(MOVE_RE) || [],
   };
@@ -425,10 +440,12 @@ function uciList() { return chess.history({ verbose: true }).map(m => m.from + m
 function hashOf() {
   const p = new URLSearchParams({ id: G.id, wn: G.w.n, wh: G.w.h, bn: G.b.n, bh: G.b.h, m: uciList().join('') });
   if (G.r) p.set('r', G.r);
+  if (G.bot) { p.set('bot', G.bot); p.set('me', mySide); }
   return '#' + p.toString();
 }
 const urlOf = () => location.origin + location.pathname + hashOf();
 const ply = () => chess.history().length;
+const ONLINE = () => !!(DB && G && !passPlay && !G.bot && !G.lesson);
 const isOver = () => !!G.r || chess.isGameOver();
 const recipient = () => (passPlay ? chess.turn() : other(mySide));
 
@@ -437,7 +454,7 @@ function getRec(id) { return games().find(r => r.id === id); }
 function saveRec() {
   if (!G || G.lesson) return;
   const list = games().filter(r => r.id !== G.id);
-  list.unshift({ id: G.id, url: urlOf(), ply: ply(), me: passPlay ? null : mySide, pp: passPlay, inv: G.invited, wn: G.w.n, bn: G.b.n, over: isOver(), t: Date.now() });
+  list.unshift({ id: G.id, url: urlOf(), ply: ply(), me: passPlay ? null : mySide, pp: passPlay, bot: G.bot || 0, inv: G.invited, wn: G.w.n, bn: G.b.n, over: isOver(), t: Date.now() });
   store.set('wc:games', list.slice(0, 25));
   history.replaceState(null, '', hashOf());
 }
@@ -448,7 +465,7 @@ function loadFromHash() {
   closeAll();
   const g = parseHash();
   if (!g) { G = null; showSetup(); return; }
-  G = { id: g.id, w: g.w, b: g.b, r: g.r };
+  G = { id: g.id, w: g.w, b: g.b, r: g.r, bot: g.bot };
   $('#setup').classList.remove('show');
   // keep only the legal prefix of the move list
   const test = new Chess(); const moves = [];
@@ -457,11 +474,11 @@ function loadFromHash() {
   const rec = getRec(G.id);
   const fresh = !rec || moves.length > rec.ply || (!!G.r && !rec.over);
   const stale = !!rec && moves.length < rec.ply;
-  passPlay = !!(rec && rec.pp);
+  passPlay = !g.bot && !!(rec && rec.pp);
   G.invited = rec ? rec.inv !== false : true;   // a link you received needs no invite
 
   chess = new Chess();
-  incoming = fresh && moves.length > 0 && !passPlay ? moves[moves.length - 1] : null;
+  incoming = fresh && moves.length > 0 && !passPlay && !G.bot ? moves[moves.length - 1] : null;
   const upto = incoming ? moves.length - 1 : moves.length;
   for (let i = 0; i < upto; i++) applyUci(moves[i]);
 
@@ -477,8 +494,9 @@ function loadFromHash() {
   if (stale) $('#stale').innerHTML = `This is an old link. This iPad has a newer position (move ${Math.ceil(rec.ply / 2)}). <button id="latest">Open the latest</button>`;
 
   render();
-  if (fresh && !stale && !passPlay) showOwl(moves.length);
+  if (fresh && !stale && !passPlay && !G.bot) showOwl(moves.length);
   else if (!stale) saveRec();
+  if (G.bot && !stale) botMove();
 }
 
 // ---------- rendering: the 3D board lives in board3d.js ----------
@@ -513,7 +531,7 @@ function panelHTML(side) {
   const score = s => caps[s].reduce((t, x) => t + VALUE[x], 0);
   const adv = score(side) - score(other(side));
   const you = !passPlay && side === mySide && !G.lesson ? ' (you)' : '';
-  return `<div class="crest" style="--c1:${h.c1};--c2:${h.c2}">${esc(p.n.charAt(0).toUpperCase())}</div>
+  return `<div class="crest" style="--c1:${h.c1};--c2:${h.c2}">${esc(([...p.n][0] || "?").toUpperCase())}</div>
     <div class="pinfo"><div class="pname">${esc(p.n)}${you}</div><div class="phouse">${h.name} · ${side === 'w' ? 'White' : 'Black'}</div></div>
     <div class="caps">${mine.map(t => `<img src="${img(other(side), t)}" alt="">`).join('')}${adv > 0 ? `<span class="adv">+${adv}</span>` : ''}</div>`;
 }
@@ -534,13 +552,20 @@ function actionHTML() {
   if (isOver()) {
     const e = endInfo();
     return `<div class="status big">${e.title}</div><div class="sub">${e.sub}</div>` +
-      (pending ? `<button class="btn pulse" data-act="send">🦉 Send it to ${to}</button>` : DB && !passPlay ? `<button class="btn ghost" data-act="share">🦉 Tell ${to}</button>` : '') +
+      (pending ? `<button class="btn pulse" data-act="send">🦉 Send it to ${to}</button>` : ONLINE() ? `<button class="btn ghost" data-act="share">🦉 Tell ${to}</button>` : '') +
+      (G.bot && !G.r && chess.turn() === mySide && ply() >= 2 ? `<button class="btn ghost" data-act="botundo">↩ Take back my last move</button>` : '') +
       `<button class="btn ghost" data-act="new">New game</button>`;
   }
   if (pending) {
     return `<div class="sub">You played ${esc(lastMove ? lastMove.san : '')}</div>
       <button class="btn pulse" data-act="send">🦉 Send move to ${to}</button>
       <button class="btn ghost" data-act="undo">Take it back</button>`;
+  }
+  if (G.bot) {
+    if (chess.turn() !== mySide) return `<div class="status">${esc(BOTS[G.bot].name)} is thinking…</div>`;
+    const theirs = lastMove && lastMove.color !== mySide ? `<div class="sub">${esc(G[lastMove.color].n)} played ${esc(lastMove.san)}</div>` : '';
+    return `${theirs}<div class="status">Your move, ${esc(G[mySide].n)}${check}</div>` +
+      (ply() >= 2 ? `<button class="btn ghost" data-act="botundo">↩ Take back my last move</button>` : '');
   }
   if (passPlay) return `<div class="status">${turnName} to move${check}</div>`;
   if (chess.turn() === mySide) {
@@ -673,12 +698,12 @@ function engine() {
   sfReady.catch(() => { sfReady = null; });
   return sfReady;
 }
-async function bestMove(fen, ms = 1500) {
+async function bestMove(fen, ms = 1500, skill = 20) {
   const w = await engine();
   return new Promise((res, rej) => {
     const t = setTimeout(() => rej(new Error('no move')), ms + 10000);
     w.onmessage = e => { const m = /^bestmove (\S+)/.exec(String(e.data)); if (m) { clearTimeout(t); res(m[1]); } };
-    w.postMessage('ucinewgame'); w.postMessage('position fen ' + fen); w.postMessage('go movetime ' + ms);
+    w.postMessage('ucinewgame'); w.postMessage('setoption name Skill Level value ' + skill); w.postMessage('position fen ' + fen); w.postMessage('go movetime ' + ms);
   });
 }
 // a piece is in danger if the other side attacks it and it is unguarded, or a cheaper piece attacks it
@@ -754,6 +779,50 @@ async function suggest() {
   render();
   if (ex) voice([ex.key], ex.text);
 }
+// ---------- 🤖 the computer opponent ----------
+// Owlet and Pixie are home-made and beatable; Wizard and Dragon are Stockfish at low and full strength.
+const BOTS = { 1: { name: '🐣 Owlet' }, 2: { name: '🧚 Pixie' }, 3: { name: '🧙 Wizard', ms: 400, skill: 3 }, 4: { name: '🐉 Dragon', ms: 1500, skill: 20 } };
+const uciOf = m => m.from + m.to + (m.promotion || '');
+const anyOf = a => a[Math.floor(Math.random() * a.length)];
+let botGen = 0;
+async function pickBotMove(lv) {
+  const b = BOTS[lv];
+  if (b.skill != null) { try { return await bestMove(chess.fen(), b.ms, b.skill); } catch (e) { console.warn('[bot]', e); } }
+  const moves = chess.moves({ verbose: true });
+  if (lv === 1) {    // Owlet: random, but grabs a capture now and then
+    const caps = moves.filter(m => m.captured);
+    return uciOf(caps.length && Math.random() < 0.4 ? anyOf(caps) : anyOf(moves));
+  }
+  // Pixie: looks one move ahead. Takes things, saves pieces, avoids hanging them; sometimes daydreams
+  if (Math.random() < 0.2) return uciOf(anyOf(moves));
+  const me = chess.turn();
+  const danger = new Set(chess.board().flat().filter(p => p && p.color === me && inDanger(p.square)).map(p => p.square));
+  let best = null, bestS = -1e9;
+  for (const m of moves) {
+    chess.move(m);
+    let sc = Math.random() * 4;
+    if (chess.isCheckmate()) sc += 1000;
+    if (m.captured) sc += VALUE[m.captured] * 10;
+    if (m.promotion) sc += 80;
+    if (inDanger(m.to)) sc -= VALUE[m.promotion || m.piece] * 10;
+    if (danger.has(m.from)) sc += VALUE[m.piece] * 8;
+    if (chess.inCheck()) sc += 2;
+    if ('cdef'.includes(m.to[0]) && '3456'.includes(m.to[1])) sc += 2;                  // likes the centre
+    if ('nb'.includes(m.piece) && (m.from[1] === '1' || m.from[1] === '8')) sc += 2;   // brings pieces out
+    chess.undo();
+    if (sc > bestS) { bestS = sc; best = m; }
+  }
+  return uciOf(best);
+}
+async function botMove() {
+  if (!G || !G.bot || isOver() || busy || chess.turn() === mySide) return;
+  const id = ++botGen, fen = chess.fen(), t0 = Date.now();
+  renderPanels();
+  const uci = await pickBotMove(G.bot);
+  await sleep(Math.max(0, 1100 - (Date.now() - t0)));     // a little thinking time, so it doesn't feel instant
+  if (!G || id !== botGen || chess.fen() !== fen || !uci) return;
+  await doMove(uci, true);
+}
 function sugHTML() {
   if (!sugVisible()) return '';
   const s = sugNow();
@@ -812,7 +881,7 @@ async function doMove(uci, remote) {
   await animate(mv);
   busy = false;
   if (remote) incoming = null;
-  else if (!passPlay) {
+  else if (!passPlay && !G.bot) {
     if (DB) { if (await dbPut()) toast('🦉 Move sent!'); else pending = true; }   // no extra Send tap
     else pending = true;
   }
@@ -822,6 +891,7 @@ async function doMove(uci, remote) {
   saveRec();
   if (passPlay && !remote && !isOver()) { await sleep(900); orient = chess.turn(); render(); }
   if (remoteQueue) { const q = remoteQueue; remoteQueue = null; onRemote(q); }
+  if (G.bot && !remote) botMove();
 }
 
 const BANTER = ['Blimey, that was brutal!', "Ooh, that's gotta hurt!", 'Smashed to bits!', 'Wicked!', 'No mercy!', 'Bet that stung!'];
@@ -1009,6 +1079,11 @@ document.addEventListener('click', async e => {
     case 'send': send(); break;
     case 'owlsay': { unlockAudio(true); const t = coachTipCached(); voice(t[4] ? [t[4]] : [], `${t[1]}. ${t[2]}`); break; }
     case 'lessons': closeAll(); showLessons(); break;
+    case 'botundo':
+      if (!G.bot || busy || G.r || chess.turn() !== mySide || ply() < 2) break;
+      botGen++; chess.undo(); chess.undo(); SUG = null;
+      { const h = chess.history({ verbose: true }); lastMove = h[h.length - 1] || null; }
+      saveRec(); renderPieces(); render(); break;
     case 'suggest': unlockAudio(true); suggest(); break;
     case 'sugsay': { unlockAudio(true); const g = sugNow(); if (g && g.key) voice([g.key], g.text); break; }
     case 'lnext': if (LESSON) startLesson(LESSON.i + 1); break;
@@ -1025,7 +1100,7 @@ document.addEventListener('click', async e => {
     case 'coach': prefs.coach = !prefs.coach; savePrefs(); renderPanels(); break;
     case 'voice': prefs.voice = !prefs.voice; savePrefs(); renderPanels(); if (prefs.voice) speak('Knight to F3.'); break;
     case 'log': if (G) { showMoves(); $('#log').classList.add('show'); } break;
-    case 'menu': if (G) { resignArmed = false; menuLabels(); menuHouses(); $('#gcode').innerHTML = DB ? `Game code <b>${esc(G.id)}</b>` : ''; $('#menu').classList.add('show'); } break;
+    case 'menu': if (G) { resignArmed = false; menuLabels(); menuHouses(); $('#gcode').innerHTML = ONLINE() ? `Game code <b>${esc(G.id)}</b>` : ''; $('#menu').classList.add('show'); } break;
     case 'close': closeAll(); break;
     case 'pieces': prefs.pieces = prefs.pieces === 'heroes' ? 'classic' : 'heroes'; savePrefs(); board3d.setStyle(prefs.pieces); menuLabels(); break;
     case 'flip': orient = other(orient); closeAll(); render(); break;
@@ -1037,9 +1112,9 @@ document.addEventListener('click', async e => {
     case 'resign':
       if (isOver()) break;
       if (!resignArmed) { resignArmed = true; b.textContent = 'Tap again to resign'; setTimeout(() => { resignArmed = false; menuLabels(); }, 3000); break; }
-      G.r = passPlay ? chess.turn() : mySide; pending = !passPlay;
+      G.r = passPlay ? chess.turn() : mySide; pending = !passPlay && !G.bot; botGen++;
       closeAll(); sfx('gong'); saveRec(); render();
-      if (DB && !passPlay && await dbPut()) pending = false, renderPanels();
+      if (ONLINE() && await dbPut()) pending = false, renderPanels();
       break;
     case 'new': LESSON = null; closeAll(); history.pushState(null, '', location.pathname); G = null; showSetup(); break;
   }
@@ -1055,11 +1130,12 @@ $('#houseRow').addEventListener('click', async e => {
   const side = passPlay ? chess.turn() : mySide;
   G[side].h = b.dataset.house;
   menuHouses(); saveRec(); render();
-  if (DB && !passPlay) dbPut();
+  if (ONLINE()) dbPut();
 });
 function menuLabels() {
   $('#piecesBtn').textContent = prefs.pieces === 'heroes' ? '♞ Pieces: animated heroes (tap for classic)' : '♞ Pieces: classic (tap for heroes)';
   $('#ppBtn').textContent = passPlay ? 'Play by owl post instead' : 'Both players on this iPad';
+  $('#ppBtn').style.display = G && G.bot ? 'none' : '';
   $('#resignBtn').textContent = 'Resign';
   $('#resignBtn').style.display = isOver() ? 'none' : '';
 }
@@ -1072,17 +1148,24 @@ function showMoves() {
 }
 
 // ---------- new game screen ----------
-const pick = { myHouse: prefs.house, oppHouse: prefs.oppHouse, mySide: 'w' };
+const pick = { myHouse: prefs.house, oppHouse: prefs.oppHouse, mySide: 'w', vs: 'friend', botLevel: '1' };
 function houseButtons(id) {
   $('#' + id).innerHTML = Object.entries(HOUSES).map(([k, h]) =>
     `<button class="choice ${pick[id] === k ? 'on' : ''}" data-v="${k}" style="--c1:${h.c1};--c2:${h.c2}"><span class="sw"></span>${h.name.slice(0, 10)}</button>`).join('');
 }
-for (const id of ['myHouse', 'oppHouse', 'mySide']) {
+for (const id of ['myHouse', 'oppHouse', 'mySide', 'vs', 'botLevel']) {
   $('#' + id).addEventListener('click', e => {
     const b = e.target.closest('.choice'); if (!b) return;
     pick[id] = b.dataset.v;
     $('#' + id).querySelectorAll('.choice').forEach(c => c.classList.toggle('on', c === b));
+    if (id === 'vs') vsLabels();
   });
+}
+function vsLabels() {
+  const bot = pick.vs === 'bot';
+  $('#botField').style.display = bot ? '' : 'none';
+  document.querySelectorAll('.friendOnly').forEach(el => { el.style.display = bot ? 'none' : ''; });
+  $('#beginBtn').textContent = bot ? 'Play the computer' : 'Begin the game';
 }
 function showSetup() {
   $('#myName').value = prefs.name || '';
@@ -1090,7 +1173,7 @@ function showSetup() {
   const list = games();
   $('#games').innerHTML = list.length ? '<h2>Your games</h2>' + list.map(r => {
     const turn = r.ply % 2 === 0 ? 'w' : 'b';
-    const state = r.over ? 'finished' : r.pp ? 'on this iPad' : r.me === turn ? 'your move' : 'their move';
+    const state = r.over ? 'finished' : r.bot ? 'v the computer' : r.pp ? 'on this iPad' : r.me === turn ? 'your move' : 'their move';
     return `<button class="game" data-url="${esc(r.url)}"><span>${esc(r.wn)} v ${esc(r.bn)}</span><small>move ${Math.floor(r.ply / 2) + 1} · ${state}</small></button>`;
   }).join('') : '';
   $('#joinBox').style.display = DB ? '' : 'none';
@@ -1120,14 +1203,16 @@ $('#games').addEventListener('click', e => { const b = e.target.closest('.game')
 $('#beginBtn').addEventListener('click', () => {
   unlockAudio(true);
   const myName = $('#myName').value.trim().slice(0, 20) || 'Wizard';
-  const oppName = $('#oppName').value.trim().slice(0, 20) || 'Friend';
+  const bot = pick.vs === 'bot' ? +pick.botLevel : 0;
+  const oppName = bot ? BOTS[bot].name : $('#oppName').value.trim().slice(0, 20) || 'Friend';
   prefs.name = myName; prefs.house = pick.myHouse; prefs.oppHouse = pick.oppHouse; savePrefs();
   const me = { n: myName, h: pick.myHouse }, op = { n: oppName, h: pick.oppHouse };
-  const id = newCode();
+  const id = bot ? 'PC' + newCode() : newCode();
   G = pick.mySide === 'w' ? { id, w: me, b: op, r: null } : { id, w: op, b: me, r: null };
-  G.invited = false;
+  if (bot) { G.bot = bot; G.invited = true; }
+  if (!bot) G.invited = false;
   chess = new Chess();
-  passPlay = $('#ppBox').checked;
+  passPlay = !bot && $('#ppBox').checked;
   mySide = pick.mySide; orient = passPlay ? 'w' : mySide;
   pending = false; selected = null; lastMove = null; incoming = null;
   $('#oppName').value = '';
@@ -1135,7 +1220,8 @@ $('#beginBtn').addEventListener('click', () => {
   saveRec();
   $('#setup').classList.remove('show');
   render();
-  if (DB && !passPlay) { dbPut(); watch(); }
+  if (ONLINE()) { dbPut(); watch(); }
+  botMove();
 });
 
 // ---------- sound: synthesised, no files ----------
@@ -1325,7 +1411,7 @@ const samePrefix = (a, b) => { for (let i = 0; i < Math.min(a.length, b.length);
 
 function watch() {
   if (es) { es.close(); es = null; }
-  if (!DB || !G || passPlay || G.lesson || !window.EventSource) return;
+  if (!ONLINE() || !window.EventSource) return;
   es = new EventSource(dbUrl(G.id));
   es.addEventListener('put', e => {
     try {
@@ -1337,11 +1423,11 @@ function watch() {
   });
   es.addEventListener('patch', refresh);
 }
-setInterval(() => { if (DB && G && !passPlay && !document.hidden && !busy) refresh(); }, 4000);
+setInterval(() => { if (ONLINE() && !document.hidden && !busy) refresh(); }, 4000);
 addEventListener('pageshow', () => refresh());
 addEventListener('focus', () => refresh());
 async function refresh() {
-  if (!DB || !G || passPlay || G.lesson) return;
+  if (!ONLINE()) return;
   const d = await dbGet(G.id);
   if (d) onRemote(d);
 }
@@ -1373,7 +1459,7 @@ async function boot() {
   if (lp) { const i = LESSONS.findIndex(l => l.id === lp); if (i >= 0) { if (es) { es.close(); es = null; } startLesson(i); return; } }
   LESSON = null;
   const g = parseHash();
-  if (DB && g) {
+  if (DB && g && !g.bot) {
     const d = await dbGet(g.id);
     const rm = remoteMoves(d);
     const p = new URLSearchParams(location.hash.slice(1));
