@@ -355,8 +355,37 @@ const img = (color, type) => `pieces/${color}${type.toUpperCase()}.svg`;
 // ---------- storage (may be unavailable in private mode) ----------
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} backupSoon(); },
 };
+// ---------- cloud backup: the games list, lessons and settings, so a forgetful iPad loses nothing ----------
+// A personal link ?p=NAME restores them on any iPad.
+const BACKUP = 'https://wizard-chess-manon-default-rtdb.europe-west1.firebasedatabase.app/wcp/';
+const KEYS = ['wc:games', 'wc:lessons', 'wc:prefs'];
+const pCode = (new URLSearchParams(location.search).get('p') || store.get('wc:code', '') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+let backupTimer = null;
+function backupNow() {
+  clearTimeout(backupTimer); backupTimer = null;
+  if (!pCode) return;
+  const body = { t: Date.now() };
+  for (const k of KEYS) body[k.slice(3)] = JSON.stringify(store.get(k, null));   // stored as text: Firebase reshapes lists
+  try { localStorage.setItem('wc:backupT', JSON.stringify(body.t)); } catch (e) {}
+  try { fetch(BACKUP + pCode + '.json', { method: 'PUT', body: JSON.stringify(body), keepalive: true }).catch(() => {}); } catch (e) {}
+}
+function backupSoon() { if (pCode && !backupTimer) backupTimer = setTimeout(backupNow, 3000); }
+if (pCode) {
+  try { localStorage.setItem('wc:code', JSON.stringify(pCode)); } catch (e) {}
+  try {
+    const r = await fetch(BACKUP + pCode + '.json', { cache: 'no-store' });
+    const c = r.ok ? await r.json() : null;
+    if (c && (c.t || 0) > store.get('wc:backupT', 0)) {   // the cloud copy is newer than this iPad's: use it
+      for (const k of KEYS) if (c[k.slice(3)] && c[k.slice(3)] !== 'null') try { localStorage.setItem(k, c[k.slice(3)]); } catch (e) {}
+      try { localStorage.setItem('wc:backupT', JSON.stringify(c.t)); } catch (e) {}
+    }
+  } catch (e) {}
+  setInterval(backupNow, 30000);
+  addEventListener('pagehide', backupNow);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) backupNow(); });
+}
 const prefs = Object.assign({ sound: true, voice: true, coach: true, name: '', house: 'G', oppHouse: 'S' }, store.get('wc:prefs', {}));
 const board3d = new Board3D(document.getElementById('board'), { onTap: sq => { unlockAudio(); handleTap(sq); }, sfx: (n, a) => sfx(n, a) });
 const savePrefs = () => store.set('wc:prefs', prefs);

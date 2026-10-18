@@ -22,6 +22,12 @@
         ".write": "$id.length == 6",
         ".validate": "newData.hasChildren(['name', 'stars'])"
       }
+    },
+    "wcp": {
+      "$id": {
+        ".read": "$id.length >= 3 && $id.length <= 12",
+        ".write": "$id.length >= 3 && $id.length <= 12"
+      }
     }
   }
 }
