@@ -549,11 +549,11 @@ function coachTip() {
   const phase = ply < 16 ? 'Opening' : (big.length <= 6 || (!pieces.some(p => p.type === 'q') && big.length <= 8)) ? 'Endgame' : 'Middlegame';
   const S = sq => sq.toUpperCase();
   const nm = t => NAMES[t].toLowerCase();
-  if (chess.inCheck()) return [phase, 'Check!', 'Your king is attacked. Three ways out: move the king, block the attack, or capture the attacker.', [kingSquare(me)]];
+  if (chess.inCheck()) return [phase, 'Check!', 'Your king is attacked. Three ways out: move the king, block the attack, or capture the attacker.', [kingSquare(me)], 'o-tip-check'];
   // checkmate in one?
   for (const m of chess.moves({ verbose: true })) {
     chess.move(m); const mate = chess.isCheckmate(); chess.undo();
-    if (mate) return [phase, 'Checkmate in one!', `There is a move that wins the game right now. Look closely at your ${nm(m.piece)}...`, [m.from]];
+    if (mate) return [phase, 'Checkmate in one!', `There is a move that wins the game right now. Look closely at your ${nm(m.piece)}...`, [m.from], 'o-tip-mate1'];
   }
   // a piece to win, or a piece in danger
   let free = null, risk = null;
@@ -568,25 +568,25 @@ function coachTip() {
       if ((!chess.isAttacked(p.square, me) || cheap) && (!risk || VALUE[p.type] > VALUE[risk.type])) risk = p;
     }
   }
-  if (risk && (!free || VALUE[risk.type] >= VALUE[free.type])) return [phase, 'Watch out!', `Your ${nm(risk.type)} on ${S(risk.square)} can be taken. Move it, or protect it with another piece.`, [risk.square]];
-  if (free) return [phase, 'A piece to win!', `${colourName(them)}'s ${nm(free.type)} on ${S(free.square)} is not safe. Can you capture it?`, [free.square]];
+  if (risk && (!free || VALUE[risk.type] >= VALUE[free.type])) return [phase, 'Watch out!', `Your ${nm(risk.type)} on ${S(risk.square)} can be taken. Move it, or protect it with another piece.`, [risk.square], `o-tip-risk-${risk.type}`];
+  if (free) return [phase, 'A piece to win!', `${colourName(them)}'s ${nm(free.type)} on ${S(free.square)} is not safe. Can you capture it?`, [free.square], `o-tip-free-${free.type}`];
   // guard f7 / f2 against the Scholar's Mate
   const weak = me === 'w' ? 'f2' : 'f7';
-  if (ply < 12 && chess.attackers(weak, them).length >= 2) return [phase, `Guard ${S(weak)}!`, `Two enemy pieces are aiming at ${S(weak)}, next to your king. Defend it, or you could be checkmated quickly.`, [weak]];
+  if (ply < 12 && chess.attackers(weak, them).length >= 2) return [phase, `Guard ${S(weak)}!`, `Two enemy pieces are aiming at ${S(weak)}, next to your king. Defend it, or you could be checkmated quickly.`, [weak], 'o-tip-guard'];
   if (phase === 'Opening') {
     const line = hist.join(' ');
     const op = OPENINGS.find(o => (line + ' ').startsWith(o[0] + ' ') || line === o[0]);
-    if (op && ply <= op[0].split(' ').length + 3) return [phase, `This is ${op[1]}`, op[2]];
+    if (op && ply <= op[0].split(' ').length + 3) return [phase, `This is ${op[1]}`, op[2], [], `o-tip-op-${OPENINGS.indexOf(op)}`];
     const home = me === 'w' ? '1' : '8';
     const knightsHome = pieces.filter(p => p.color === me && p.type === 'n' && p.square[1] === home).length;
     const kingHome = kingSquare(me) === 'e' + home;
     const queenOut = !pieces.some(p => p.color === me && p.type === 'q' && p.square === 'd' + home);
     const centre = pieces.some(p => p.color === me && p.type === 'p' && ['d4', 'e4', 'd5', 'e5'].includes(p.square));
-    if (!centre) return [phase, 'Take the centre', 'Pawns on e4 and d4 (or e5 and d5) control the middle of the board and give your pieces room.', ['d4', 'e4', 'd5', 'e5']];
-    if (queenOut && ply < 10) return [phase, 'Careful with the queen', 'Bringing her out early lets your opponent chase her around while they develop. Knights and bishops first.', pieces.filter(p => p.color === me && p.type === 'q').map(p => p.square)];
-    if (knightsHome >= 1) return [phase, 'Knights before bishops', 'Bring your knights out towards the centre: c3 and f3 for White, c6 and f6 for Black.', me === 'w' ? ['c3', 'f3'] : ['c6', 'f6']];
-    if (kingHome && ply >= 8) return [phase, 'Castle soon', 'Castling tucks your king into the corner and brings a rook into the game. Clear the pieces between them first.', [kingSquare(me), me === 'w' ? 'g1' : 'g8']];
-    return [phase, 'Opening rules', 'Control the centre, develop your knights and bishops, castle, then connect your rooks.'];
+    if (!centre) return [phase, 'Take the centre', 'Pawns on e4 and d4 (or e5 and d5) control the middle of the board and give your pieces room.', ['d4', 'e4', 'd5', 'e5'], 'o-tip-centre'];
+    if (queenOut && ply < 10) return [phase, 'Careful with the queen', 'Bringing her out early lets your opponent chase her around while they develop. Knights and bishops first.', pieces.filter(p => p.color === me && p.type === 'q').map(p => p.square), 'o-tip-queen'];
+    if (knightsHome >= 1) return [phase, 'Knights before bishops', 'Bring your knights out towards the centre: c3 and f3 for White, c6 and f6 for Black.', me === 'w' ? ['c3', 'f3'] : ['c6', 'f6'], 'o-tip-knights'];
+    if (kingHome && ply >= 8) return [phase, 'Castle soon', 'Castling tucks your king into the corner and brings a rook into the game. Clear the pieces between them first.', [kingSquare(me), me === 'w' ? 'g1' : 'g8'], 'o-tip-castle'];
+    return [phase, 'Opening rules', 'Control the centre, develop your knights and bishops, castle, then connect your rooks.', [], 'o-tip-rules'];
   }
   if (phase === 'Middlegame') {
     const tips = [
@@ -597,8 +597,8 @@ function coachTip() {
       ['Pins and skewers', 'A piece stuck in front of its king or queen is pinned: attack it again!'],
       ['Trade when ahead', 'If you have more pieces, swapping pieces makes your advantage easier to use.'],
     ];
-    const t = tips[Math.floor(ply / 2) % tips.length];
-    return [phase, t[0], t[1]];
+    const i = Math.floor(ply / 2) % tips.length, t = tips[i];
+    return [phase, t[0], t[1], [], `o-tip-mid-${i}`];
   }
   const tips = [
     ['King, come out!', 'In the endgame the king is a strong piece. March it towards the centre and the pawns.'],
@@ -606,8 +606,8 @@ function coachTip() {
     ['Rook behind the pawn', 'Rooks belong behind passed pawns, yours or your opponent\'s.'],
     ['The opposition', 'With only kings and pawns, standing your king face to face with theirs (one square apart) can win the race.'],
   ];
-  const t = tips[Math.floor(ply / 2) % tips.length];
-  return [phase, t[0], t[1]];
+  const i = Math.floor(ply / 2) % tips.length, t = tips[i];
+  return [phase, t[0], t[1], [kingSquare(me)].filter(() => i === 0), `o-tip-end-${i}`];
 }
 let coachMemo = { key: '', tip: null };
 function coachTipCached() {
@@ -624,7 +624,7 @@ function hintSquares() {
 function coachHTML() {
   if (!coachVisible()) return '';
   const [phase, title, text] = coachTipCached();
-  return `<div class="coach"><span class="ph">${phase}</span><b>🦉 Professor Owl: ${esc(title)}</b>${esc(text)}</div>`;
+  return `<div class="coach" data-act="owlsay" style="cursor:pointer"><span class="ph">${phase} 🔊</span><b>🦉 Professor Owl: ${esc(title)}</b>${esc(text)}</div>`;
 }
 
 function render() {
@@ -682,12 +682,25 @@ async function doMove(uci, remote) {
   }
   render();
   if (chess.isCheckmate()) toppleKing();
-  speak(callout(mv));
+  commentate(mv);
   saveRec();
   if (passPlay && !remote && !isOver()) { await sleep(900); orient = chess.turn(); render(); }
   if (remoteQueue) { const q = remoteQueue; remoteQueue = null; onRemote(q); }
 }
 
+const BANTER = ['Blimey, that was brutal!', "Ooh, that's gotta hurt!", 'Smashed to bits!', 'Wicked!', 'No mercy!', 'Bet that stung!'];
+function commentate(mv) {
+  let keys;
+  if (mv.isKingsideCastle() || mv.isQueensideCastle()) keys = ['r-castle'];
+  else if (mv.captured) keys = [`r-cap-${mv.piece}-${mv.captured}`];
+  else keys = [`r-mv-${mv.piece}-${mv.to}`];
+  if (mv.promotion) keys.push(`r-promo-${mv.promotion}`);
+  if (chess.isCheckmate()) keys.push('r-mate');
+  else if (chess.isDraw()) keys.push('r-draw');
+  else if (chess.inCheck()) keys.push('r-check');
+  else if (mv.captured && Math.random() < 0.6) keys.push(`r-ban-${Math.floor(Math.random() * BANTER.length)}`);
+  voice(keys, callout(mv));
+}
 function callout(mv) {
   const to = mv.to.toUpperCase();
   let s;
@@ -747,6 +760,7 @@ function startLesson(i) {
   LESSON = { i, l, step: 0, msg: null, done: false, hintOn: false };
   history.replaceState(null, '', location.pathname + '#lesson=' + l.id);
   render();
+  voice([`o-les-${l.id}-intro`], '');
 }
 function leaveLessons() { LESSON = null; G = null; history.pushState(null, '', location.pathname); showSetup(); }
 
@@ -762,7 +776,7 @@ async function lessonMove(uci) {
     : u === L.solution[LESSON.step] || (LESSON.step === 0 && (L.accept || []).includes(u));
   if (!ok) {
     LESSON.msg = ['Not quite', L.hint]; LESSON.hintOn = true;
-    render(); speak('Not quite. Try again.');
+    render(); voice(['o-les-wrong', `o-les-${L.id}-hint`], 'Not quite. Try again.');
     await sleep(1500);
     chess = new Chess(before); lastMove = null; render();
     return;
@@ -770,7 +784,7 @@ async function lessonMove(uci) {
   LESSON.step++;
   if (L.goal !== 'mate' && LESSON.step < L.solution.length) {
     LESSON.msg = ['Good!', L.mid || 'Now watch my reply...']; LESSON.hintOn = false;
-    render();
+    render(); voice([`o-les-${L.id}-mid`], '');
     await sleep(900);
     const rm = applyUci(L.solution[LESSON.step]);
     busy = true; lastMove = rm; renderSquares();
@@ -782,7 +796,7 @@ async function lessonMove(uci) {
   LESSON.done = true; LESSON.hintOn = false;
   LESSON.msg = ['Well done!', L.done];
   const d = lessonsDone(); if (!d.includes(L.id)) { d.push(L.id); store.set('wc:lessons', d); }
-  sfx('chime'); speak('Well done!');
+  sfx('chime'); voice([`o-les-${L.id}-done`], 'Well done!');
   render();
   if (chess.isCheckmate()) toppleKing();
 }
@@ -808,6 +822,7 @@ function showOwl(n) {
     : n === 0 ? `You play ${mySide === 'w' ? 'White, and you move first' : 'Black'}.`
     : 'Open it to see their move.';
   $('#owl').classList.add('show');
+  sfx('owl');
 }
 $('#owlBtn').addEventListener('click', async () => {
   unlockAudio(true);
@@ -856,10 +871,11 @@ document.addEventListener('click', async e => {
   if (!b) { if (e.target.id === 'menu' || e.target.id === 'log' || e.target.id === 'lessonsOv') { $('#lessonsOv').classList.remove('show'); if (G) closeAll(); } return; }
   switch (b.dataset.act) {
     case 'send': send(); break;
+    case 'owlsay': { unlockAudio(true); const t = coachTipCached(); voice(t[4] ? [t[4]] : [], `${t[1]}. ${t[2]}`); break; }
     case 'lessons': closeAll(); showLessons(); break;
     case 'lnext': if (LESSON) startLesson(LESSON.i + 1); break;
     case 'lretry': if (LESSON) startLesson(LESSON.i); break;
-    case 'lhint': if (LESSON) { LESSON.hintOn = true; LESSON.msg = ['Hint', LESSON.l.hint]; render(); } break;
+    case 'lhint': if (LESSON) { LESSON.hintOn = true; LESSON.msg = ['Hint', LESSON.l.hint]; render(); voice([`o-les-${LESSON.l.id}-hint`], LESSON.l.hint); } break;
     case 'lexit': leaveLessons(); break;
     case 'share': share(); break;
     case 'undo':
@@ -975,6 +991,7 @@ $('#beginBtn').addEventListener('click', () => {
   mySide = pick.mySide; orient = passPlay ? 'w' : mySide;
   pending = false; selected = null; lastMove = null; incoming = null;
   $('#oppName').value = '';
+  sfx('start'); voice(['r-start'], '');
   saveRec();
   $('#setup').classList.remove('show');
   render();
@@ -986,7 +1003,7 @@ let AC = null, NOISE = null, spoke = false;
 function unlockAudio(withSpeech) {
   audioOn = true;
   if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; } }
-  if (AC.state === 'suspended') AC.resume();   // iOS starts audio suspended
+  if (AC.state !== 'running') AC.resume();   // iOS starts suspended, and calls (FaceTime) leave it 'interrupted'
   if (!NOISE) {
     NOISE = AC.createBuffer(1, AC.sampleRate * 2, AC.sampleRate);
     const d = NOISE.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -1014,8 +1031,45 @@ function tone(t, f0, f1, dur, peak, type = 'sine', attack) {
   const g = AC.createGain(); env(g, t, peak, dur, attack);
   o.connect(g).connect(AC.destination); o.start(t); o.stop(t + dur + 0.05);
 }
+// Recorded sounds and voices live in sounds/ (listed in sounds/manifest.json).
+// Anything not recorded falls back to the synthesised sound or the iPad voice.
+let CLIPS = new Set(); const BUF = new Map();
+fetch('sounds/manifest.json', { cache: 'no-store' }).then(r => (r.ok ? r.json() : [])).then(k => { CLIPS = new Set(k); }).catch(() => {});
+function clipBuf(key) {
+  if (!BUF.has(key)) BUF.set(key, fetch(`sounds/${key}.mp3`).then(r => r.arrayBuffer())
+    .then(b => new Promise((res, rej) => AC.decodeAudioData(b, res, rej))).catch(() => null));
+  return BUF.get(key);
+}
+function playClip(key, vol = 0.8, when = 0) {
+  if (!AC || !CLIPS.has(key)) return false;
+  clipBuf(key).then(b => {
+    if (!b) return;
+    const s = AC.createBufferSource(), g = AC.createGain(); g.gain.value = vol;
+    s.buffer = b; s.connect(g).connect(AC.destination); s.start(AC.currentTime + when);
+  });
+  return true;
+}
+let voiceGen = 0;
+async function voice(keys, text) {
+  if (!prefs.voice) return;
+  if (!AC) unlockAudio();
+  if (!keys.length || !keys.every(k => CLIPS.has(k))) { if (text) speak(text); return; }
+  const id = ++voiceGen; try { speechSynthesis.cancel(); } catch (e) {}
+  const bufs = await Promise.all(keys.map(clipBuf));
+  if (id !== voiceGen) return;
+  if (bufs.some(b => !b)) { if (text) speak(text); return; }
+  let t = AC.currentTime + 0.05;
+  for (const b of bufs) { const s = AC.createBufferSource(), g = AC.createGain(); g.gain.value = 1; s.buffer = b; s.connect(g).connect(AC.destination); s.start(t); t += b.duration + 0.06; }
+}
+const SFX_CLIP = { piece: a => 'move-' + a, strike: () => 'slash', crash: () => 'shatter', check: () => 'check', gong: () => 'checkmate',
+  chime: () => 'promote', battlecry: () => 'battlecry', castle: () => 'castle', owl: () => 'owl', start: () => 'start' };
+const SFX_VOL = { 'move-p': 0.5, 'move-b': 0.6, 'move-n': 0.7, checkmate: 0.9, battlecry: 0.7, owl: 0.6 };
+
 function sfx(name, arg) {
   if (!prefs.sound || !AC || !NOISE) return;
+  const ck = SFX_CLIP[name] && SFX_CLIP[name](arg);
+  if (ck && playClip(ck, SFX_VOL[ck] || 0.8)) return;
+  if (name === 'slide' && CLIPS.has('move-p')) return;     // each piece has its own sound now
   const t = AC.currentTime + 0.01;
   switch (name) {
     case 'select': tone(t, 540, 540, 0.09, 0.05, 'triangle'); break;
@@ -1043,6 +1097,55 @@ function speak(text) {
   } catch (e) {}
 }
 
+// after a phone or FaceTime call, the next tap brings the sound back
+document.addEventListener('pointerdown', () => { if (AC && AC.state !== 'running') AC.resume(); }, true);
+
+window.__wcLines = () => {
+  const L = {}, SQS = [];
+  for (const f of 'abcdefgh') for (let r = 1; r <= 8; r++) SQS.push(f + r);
+  for (const p of 'pnbrqk') for (const sq of SQS) { if (p === 'p' && (sq[1] === '1' || sq[1] === '8')) continue; L[`r-mv-${p}-${sq}`] = `${NAMES[p]} to ${sq.toUpperCase()}!`; }
+  for (const p of 'pnbrqk') for (const c of 'pnbrq') L[`r-cap-${p}-${c}`] = `${NAMES[p]} takes ${NAMES[c].toLowerCase()}!`;
+  L['r-castle'] = "Castles! The king's tucked away, nice and safe.";
+  for (const p of 'qrbn') L[`r-promo-${p}`] = `The pawn's turned into a ${NAMES[p].toLowerCase()}! Brilliant!`;
+  L['r-check'] = "Check! The king's in trouble!";
+  L['r-mate'] = 'Checkmate! What a game!';
+  L['r-draw'] = "It's a draw! Nobody wins this one.";
+  BANTER.forEach((b, i) => { L[`r-ban-${i}`] = b; });
+  L['r-start'] = "Right then, let's play some wizard chess!";
+  // Professor Owl
+  L['o-tip-check'] = 'Check! Your king is under attack. Move it, block the attack, or capture the attacker.';
+  L['o-tip-mate1'] = "Oh! There's a move that wins the game right now. Look very carefully.";
+  for (const p of 'pnbrq') {
+    L[`o-tip-risk-${p}`] = `Watch out! Your ${NAMES[p].toLowerCase()} on the purple square can be taken. Move it, or protect it.`;
+    L[`o-tip-free-${p}`] = `A piece to win! That ${NAMES[p].toLowerCase()} on the purple square isn't safe. Can you capture it?`;
+  }
+  L['o-tip-guard'] = 'Careful! Two enemy pieces are aiming at the square next to your king. Defend it!';
+  OPENINGS.forEach((o, i) => { L[`o-tip-op-${i}`] = `This is ${o[1]}. ${o[2]}`; });
+  L['o-tip-centre'] = 'Take the centre! Pawns in the middle of the board give your pieces room to move.';
+  L['o-tip-queen'] = "Careful with the queen. If she comes out too early, she'll be chased around. Knights and bishops first.";
+  L['o-tip-knights'] = 'Knights before bishops. Bring your knights out towards the centre.';
+  L['o-tip-castle'] = 'Castle soon! It tucks your king into the corner and brings a rook into the game.';
+  L['o-tip-rules'] = 'Remember the opening rules: control the centre, develop your knights and bishops, castle, then connect your rooks.';
+  const mid = ['Make a plan. Attack where you have more pieces, and count attackers and defenders before you capture.',
+    'Look for forks. A knight or queen that attacks two pieces at once usually wins one of them.',
+    'Rooks love open files. Put them on lines with no pawns, so they can reach the other side.',
+    "Before every move, ask yourself: what does my opponent want? Check what their last move threatens.",
+    'Pins and skewers! A piece stuck in front of its king or queen is pinned. Attack it again!',
+    "Trade when you're ahead. Swapping pieces makes your advantage easier to use."];
+  mid.forEach((t, i) => { L[`o-tip-mid-${i}`] = t; });
+  const end = ['King, come out! In the endgame the king is a strong piece. March it towards the centre.',
+    "Push your passed pawns. A pawn with nothing in its way can run to the far side and become a queen.",
+    "Rooks belong behind passed pawns, yours or your opponent's.",
+    'The opposition: with only kings and pawns, standing your king face to face with theirs can win the race.'];
+  end.forEach((t, i) => { L[`o-tip-end-${i}`] = t; });
+  L['o-les-wrong'] = 'Not quite. Have another look.';
+  for (const l of LESSONS) {
+    L[`o-les-${l.id}-intro`] = l.intro; L[`o-les-${l.id}-hint`] = l.hint; L[`o-les-${l.id}-done`] = l.done;
+    if (l.mid) L[`o-les-${l.id}-mid`] = l.mid;
+  }
+  return L;
+};
+
 // ---------- layout ----------
 function layout() {
   const W = innerWidth, H = innerHeight;
@@ -1058,7 +1161,7 @@ addEventListener('orientationchange', () => setTimeout(layout, 250));
 addEventListener('hashchange', boot);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
-  if (AC && AC.state === 'suspended') AC.resume();
+  if (AC && AC.state !== 'running') AC.resume();
   refresh();   // iOS pauses the live connection in the background
 });
 

@@ -515,6 +515,7 @@ export class Board3D {
     const hop = mv.piece === 'n';
     const dist = a.distanceTo(b);
     this.hooks.sfx && this.hooks.sfx('slide', Math.min(0.9, 0.32 + dist * 0.1));
+    this.hooks.sfx && this.hooks.sfx(mv.isKingsideCastle() || mv.isQueensideCastle() ? 'castle' : 'piece', mv.piece);   // whinny, bell, fanfare...
 
     if (victim) {
       // the kill: advance, wind up, strike, and the victim bursts apart
@@ -526,6 +527,7 @@ export class Board3D {
       const axis = new THREE.Vector3(dir.z, 0, -dir.x);
       const q = new THREE.Quaternion();
       const back = hop ? -0.75 : -0.42;           // knights rear up
+      this.hooks.sfx && this.hooks.sfx('battlecry');
       await this.tween(260, p => {
         q.setFromAxisAngle(axis, back * easeOut(p)); g.quaternion.copy(q);
         g.position.y = hop ? 0.25 * easeOut(p) : 0;
