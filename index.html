@@ -8,7 +8,8 @@
 <meta name="theme-color" content="#0d0b10">
 <title>Wizard Chess</title>
 <link rel="icon" href="pieces/wN.svg">
-<link rel="apple-touch-icon" href="pieces/wN.svg">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-title" content="Wizard Chess">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
@@ -183,6 +184,10 @@
     padding: 10px 12px; margin-top: 6px; border-radius: 10px; background: rgba(255,255,255,.05); font-size: 17px;
   }
   .game small { color: var(--dim); font-style: italic; }
+  .codein { flex: 1; font: inherit; font-size: 20px; letter-spacing: 3px; text-transform: uppercase; padding: 10px 12px; border-radius: 10px; color: var(--ink);
+    background: rgba(0,0,0,.4); border: 1px solid rgba(217,180,90,.35); outline: none; user-select: text; -webkit-user-select: text; min-width: 0; }
+  .gcode { text-align: center; color: var(--dim); font-size: 16px; margin: -4px 0 6px; }
+  .gcode b { font-family: var(--title); color: var(--gold2); letter-spacing: 2px; }
 
   /* the owl's letter */
   .letter {
@@ -260,6 +265,11 @@
     <div class="field"><label>Their house</label><div class="choices" id="oppHouse"></div></div>
     <label class="check-row"><input type="checkbox" id="ppBox"> Both players on this iPad</label>
     <button class="btn" style="width:100%" id="beginBtn">Begin the game</button>
+    <div class="games" id="joinBox">
+      <h2>Join a friend's game</h2>
+      <div class="row"><input type="text" id="joinCode" maxlength="8" autocomplete="off" autocapitalize="characters" placeholder="Game code" class="codein"><button class="btn ghost" id="joinBtn" style="flex:none">Join</button></div>
+      <div class="row" id="joinWho" style="margin-top:8px"></div>
+    </div>
     <div class="games" id="games"></div>
   </div>
 </div>
@@ -282,6 +292,7 @@
 <div class="overlay" id="menu">
   <div class="card">
     <h2>Menu</h2>
+    <div class="gcode" id="gcode"></div>
     <button class="btn ghost" data-act="flip">Turn the board round</button>
     <button class="btn ghost" data-act="copy">Copy the game link</button>
     <button class="btn ghost" data-act="pp" id="ppBtn"></button>
@@ -310,6 +321,8 @@ const HOUSES = {
 const NAMES = { p: 'Pawn', n: 'Knight', b: 'Bishop', r: 'Rook', q: 'Queen', k: 'King' };
 const VALUE = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 const MOVE_RE = /[a-h][1-8][a-h][1-8][QRBN]?/g;
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // no 0/O or 1/I/L to confuse
+const newCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => CODE_CHARS[b % CODE_CHARS.length]).join('');
 const other = s => (s === 'w' ? 'b' : 'w');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -379,6 +392,7 @@ function loadFromHash() {
   const g = parseHash();
   if (!g) { G = null; showSetup(); return; }
   G = { id: g.id, w: g.w, b: g.b, r: g.r };
+  $('#setup').classList.remove('show');
   // keep only the legal prefix of the move list
   const test = new Chess(); const moves = [];
   for (const m of g.moves) { try { test.move({ from: m.slice(0, 2), to: m.slice(2, 4), promotion: m[4] && m[4].toLowerCase() }); moves.push(m); } catch (e) { break; } }
@@ -395,7 +409,7 @@ function loadFromHash() {
   for (let i = 0; i < upto; i++) applyUci(moves[i]);
 
   const turnAtEnd = moves.length % 2 === 0 ? 'w' : 'b';
-  mySide = rec && rec.me && !fresh ? rec.me : turnAtEnd;
+  mySide = rec && rec.me ? rec.me : turnAtEnd;
   orient = passPlay ? turnAtEnd : mySide;
   pending = false; selected = null; busy = false;
   const h = chess.history({ verbose: true }); lastMove = h[h.length - 1] || null;
@@ -489,7 +503,7 @@ function actionHTML() {
   if (isOver()) {
     const e = endInfo();
     return `<div class="status big">${e.title}</div><div class="sub">${e.sub}</div>` +
-      (pending ? `<button class="btn pulse" data-act="send">🦉 Send it to ${to}</button>` : DB && !passPlay ? `<button class="btn ghost" data-act="share">🦉 Tell ${to} on Signal</button>` : '') +
+      (pending ? `<button class="btn pulse" data-act="send">🦉 Send it to ${to}</button>` : DB && !passPlay ? `<button class="btn ghost" data-act="share">🦉 Tell ${to}</button>` : '') +
       `<button class="btn ghost" data-act="new">New game</button>`;
   }
   if (pending) {
@@ -505,7 +519,7 @@ function actionHTML() {
   if (!G.invited) return `<div class="status">Waiting for ${turnName}…</div>
     <button class="btn pulse" data-act="share">🦉 Send the invite to ${turnName}</button>`;
   if (DB) return `<div class="status">Waiting for ${turnName}'s move…</div><div class="sub">It will appear here by magic.</div>
-    <button class="btn ghost" data-act="share">🦉 Nudge ${turnName} on Signal</button>`;
+    <button class="btn ghost" data-act="share">🦉 Nudge ${turnName}</button>`;
   return `<div class="status">Waiting for ${turnName}'s owl…</div>
     <button class="btn ghost" data-act="share">🦉 Send the link to ${turnName}</button>`;
 }
@@ -714,7 +728,7 @@ async function share() {
   const url = urlOf();
   const to = G[recipient()].n, me = G[passPlay ? other(chess.turn()) : mySide].n;
   let text;
-  if (!G.invited) text = `${me} challenges you to Wizard Chess! 🦉`;
+  if (!G.invited) text = `${me} challenges you to Wizard Chess! 🦉 Game code ${G.id}`;
   else if (isOver()) text = `Wizard Chess: ${endInfo().title.replace(/&[^;]+;/g, "'")} 🦉`;
   else if (ply() === 0) text = `${me} challenges you to Wizard Chess! 🦉`;
   else if (pending && lastMove) text = `${me} played ${lastMove.san}. Your move, ${to}! 🦉`;
@@ -723,7 +737,7 @@ async function share() {
     try { await navigator.share({ title: 'Wizard Chess', text, url }); sent(); return; }
     catch (e) { if (e && e.name === 'AbortError') return; }
   }
-  if (await copyText(url)) { sent(); toast('Link copied. Paste it into Signal.'); }
+  if (await copyText(url)) { sent(); toast('Link copied. Paste it into Messages.'); }
   else toast('Could not copy. Use the share button in Safari.');
 }
 function sent() { if (DB && pending) dbPut(); pending = false; G.invited = true; saveRec(); renderPanels(); toast('🦉 Owl sent!'); }
@@ -752,7 +766,7 @@ document.addEventListener('click', async e => {
     case 'sound': prefs.sound = !prefs.sound; savePrefs(); renderPanels(); break;
     case 'voice': prefs.voice = !prefs.voice; savePrefs(); renderPanels(); if (prefs.voice) speak('Knight to F3.'); break;
     case 'log': if (G) { showMoves(); $('#log').classList.add('show'); } break;
-    case 'menu': if (G) { resignArmed = false; menuLabels(); $('#menu').classList.add('show'); } break;
+    case 'menu': if (G) { resignArmed = false; menuLabels(); $('#gcode').innerHTML = DB ? `Game code <b>${esc(G.id)}</b>` : ''; $('#menu').classList.add('show'); } break;
     case 'close': closeAll(); break;
     case 'flip': orient = other(orient); closeAll(); render(); break;
     case 'copy': closeAll(); if (await copyText(urlOf())) toast('Link copied.'); break;
@@ -805,9 +819,29 @@ function showSetup() {
     const state = r.over ? 'finished' : r.pp ? 'on this iPad' : r.me === turn ? 'your move' : 'their move';
     return `<button class="game" data-url="${esc(r.url)}"><span>${esc(r.wn)} v ${esc(r.bn)}</span><small>move ${Math.floor(r.ply / 2) + 1} · ${state}</small></button>`;
   }).join('') : '';
+  $('#joinBox').style.display = DB ? '' : 'none';
+  $('#joinWho').innerHTML = '';
   $('#setup').classList.add('show');
   $('#stale').classList.remove('show');
 }
+$('#joinBtn').addEventListener('click', async () => {
+  const code = $('#joinCode').value.trim().toUpperCase();
+  $('#joinWho').innerHTML = '';
+  if (!code) return;
+  const d = await dbGet(code);
+  if (!d || !d.w || !d.b) { toast('No game with that code.'); return; }
+  $('#joinWho').innerHTML = ['w', 'b'].map(s => `<button class="btn" data-side="${s}">I'm ${esc(d[s].n)}</button>`).join('');
+  $('#joinWho').onclick = e => {
+    const b = e.target.closest('[data-side]'); if (!b) return;
+    unlockAudio(true);
+    const list = games().filter(r => r.id !== code);
+    list.unshift({ id: code, url: '', ply: -1, me: b.dataset.side, pp: false, wn: d.w.n, bn: d.b.n, over: false, t: Date.now() });
+    store.set('wc:games', list.slice(0, 25));
+    const p = new URLSearchParams({ id: code, wn: d.w.n, wh: d.w.h, bn: d.b.n, bh: d.b.h, m: d.m || '' });
+    if (d.r) p.set('r', d.r);
+    location.hash = p.toString();
+  };
+});
 $('#games').addEventListener('click', e => { const b = e.target.closest('.game'); if (b) location.href = b.dataset.url; });
 $('#beginBtn').addEventListener('click', () => {
   unlockAudio(true);
@@ -815,7 +849,7 @@ $('#beginBtn').addEventListener('click', () => {
   const oppName = $('#oppName').value.trim().slice(0, 20) || 'Friend';
   prefs.name = myName; prefs.house = pick.myHouse; prefs.oppHouse = pick.oppHouse; savePrefs();
   const me = { n: myName, h: pick.myHouse }, op = { n: oppName, h: pick.oppHouse };
-  const id = Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
+  const id = newCode();
   G = pick.mySide === 'w' ? { id, w: me, b: op, r: null } : { id, w: op, b: me, r: null };
   G.invited = false;
   chess = new Chess();

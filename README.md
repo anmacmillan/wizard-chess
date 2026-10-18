@@ -1,14 +1,16 @@
 # Wizard Chess
 
-Chess for Manon, with stone pieces that smash each other. You play friends one move at a time, sending each move by Signal (or any messaging app), the way you'd send an owl.
+Chess for Manon, with stone pieces that smash each other. You play friends one move at a time from separate iPads.
 
 Play: https://anmacmillan.github.io/wizard-chess/
 
 ## How it works
 
-- Start a game, make your move, tap **Send move**, then **Send the invite** and pick Signal from the share sheet.
-- Your friend opens the link, sees your move arrive, makes theirs and sends it back.
-- The whole game lives in the link. With live sync switched on (`firebase-config.js`), moves also save to a Firebase Realtime Database, so an open board updates by itself and an old link always opens the latest position.
+- Start a game, make your move, tap **Send move**, then **Send the invite** and pick Messages, Signal or WhatsApp from the share sheet.
+- Or give your friend the six-letter game code (Menu shows it). They open the site, type it under **Join a friend's game** and tap their name.
+- Moves save to a Firebase Realtime Database (project `wizard-chess-manon`, Belgium), so an open board updates by itself and any old link opens the latest position. **Nudge** sends a reminder.
+- Without the database (empty `firebase-config.js`) the whole game travels in the link instead.
+- Add it to the iPad home screen from Safari's share button. The home-screen app keeps its own list of games, so join games there with the code.
 - "Both players on this iPad" turns the board round after each move instead.
 
 ## Live sync setup
