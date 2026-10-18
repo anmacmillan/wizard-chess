@@ -15,6 +15,13 @@
         ".write": "$id.length >= 6 && $id.length <= 24",
         ".validate": "newData.hasChildren(['p', 'seed', 'round'])"
       }
+    },
+    "ttb": {
+      "$id": {
+        ".read": "$id.length == 6",
+        ".write": "$id.length == 6",
+        ".validate": "newData.hasChildren(['name', 'stars'])"
+      }
     }
   }
 }
