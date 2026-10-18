@@ -88,6 +88,9 @@
   .ltro { grid-column: 2 / -1; font-size: 20px; letter-spacing: 2px; }
   .lres { text-align: left; padding: 4px 2px; font-size: 15px; } .lres small { opacity: .65; }
   #league .card { max-height: 88vh; overflow-y: auto; }
+  .pm .pmrow { margin-top: 7px; }
+  .pm .pmw { font-size: 14px; opacity: .8; }
+  .mini { display: inline-block; margin: 4px 4px 0 0; padding: 4px 9px; border-radius: 9px; font-size: 13px; font-weight: 700; color: #3b2a14; background: rgba(120,80,30,.18); border: 1px solid rgba(120,80,30,.35); }
   .coach .ph { float: right; font-style: italic; font-size: 13px; opacity: .7; }
   .hrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0 4px; }
   .lgroup { font-family: var(--title); color: var(--gold); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; margin: 14px 0 4px; }
@@ -473,6 +476,7 @@ function saveRec() {
   history.replaceState(null, '', hashOf());
   if (isOver()) recordResult();
   if (TURN && TURN.gid !== G.id + ply()) { TURN = null; REPLAY = null; }
+  if (PM && PM.gid !== G.id + ply()) { PM = null; REPLAY = null; }
 }
 
 function applyUci(u) { return chess.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] && u[4].toLowerCase() }); }
@@ -572,7 +576,7 @@ function actionHTML() {
     return `<div class="status big">${e.title}</div><div class="sub">${e.sub}</div>` +
       (WATCH ? '' : pending ? `<button class="btn pulse" data-act="send">🦉 Send it to ${to}</button>` : ONLINE() ? `<button class="btn ghost" data-act="share">🦉 Tell ${to}</button>` : '') +
       (G.bot && !G.r && chess.turn() === mySide && ply() >= 2 ? `<button class="btn ghost" data-act="botundo">↩ Take back my last move</button>` : '') +
-      turningHTML() + `<button class="btn ghost" data-act="league">🏆 Scoreboard</button><button class="btn ghost" data-act="new">New game</button>`;
+      pmHTML() + turningHTML() + `<button class="btn ghost" data-act="league">🏆 Scoreboard</button><button class="btn ghost" data-act="new">New game</button>`;
   }
   if (WATCH) {
     const last = lastMove ? `<div class="sub">${esc(G[lastMove.color].n)} played ${esc(lastMove.san)}</div>` : '';
@@ -999,6 +1003,153 @@ $('#leagueBody').addEventListener('click', e => {
 });
 
 // ---------- 🦉 the turning point: Professor Owl finds the move that changed the game ----------
+
+// ---------- one engine study of the game, shared by "What changed the game?" and "How did I play?" ----------
+let ANALYSIS = null, ANALYSING = null;
+function analyseGame(onProgress) {
+  const gid = G.id + ply();
+  if (ANALYSIS && ANALYSIS.gid === gid) return Promise.resolve(ANALYSIS);
+  if (ANALYSING && ANALYSING.gid === gid) { ANALYSING.subs.push(onProgress); return ANALYSING.p; }
+  const moves = chess.history({ verbose: true }), id = G.id;
+  const t = new Chess(), fens = [t.fen()];
+  for (const m of moves) { t.move(m); fens.push(t.fen()); }
+  const subs = [onProgress];
+  const p = (async () => {
+    const W = [], best = [];
+    for (let i = 0; i < fens.length; i++) {
+      const c = new Chess(fens[i]), turn = fens[i].split(' ')[1];
+      const r = c.isGameOver() ? { score: c.isCheckmate() ? -100 : 0, best: '' } : await evalFen(fens[i]);
+      const s = Math.max(-100, Math.min(100, r.score));
+      W.push(turn === 'w' ? s : -s); best.push(r.best);
+      if (!G || G.id !== id) throw new Error('left the game');
+      subs.forEach(f => f && f(i + 1, fens.length));
+    }
+    ANALYSIS = { gid, moves, fens, W, best };
+    return ANALYSIS;
+  })();
+  ANALYSING = { gid, p, subs };
+  p.finally(() => { if (ANALYSING && ANALYSING.p === p) ANALYSING = null; });
+  return p;
+}
+
+// ---------- 📋 How did I play? One thing done well, one thing to practise ----------
+let PM = null;           // { busy, done, total } | { cards: {w, b}, side } | { fail }
+const PM_SHOW = {};      // key -> { fen, played, best } for "Show me"
+const uciMove = (fen, u) => { try { return u ? new Chess(fen).move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }) : null; } catch (e) { return null; } };
+const moveNo = i => Math.floor(i / 2) + 1;
+const pieceWord = t => NAMES[t].toLowerCase();
+function buildCard(A, side) {
+  const { moves, fens, W, best } = A, sign = side === 'w' ? 1 : -1, opp = other(side);
+  const me = G[side].n, them = G[opp].n;
+  const mine = [], key = (k, v) => { PM_SHOW[side + k] = v; return side + k; };
+  for (let i = 0; i < moves.length; i++) {
+    if (moves[i].color !== side) continue;
+    const before = Math.min(W[i] * sign, 15), after = Math.min(W[i + 1] * sign, 15);
+    mine.push({ i, m: moves[i], loss: Math.max(0, before - after), before, after, best: best[i], played: moves[i].from + moves[i].to + (moves[i].promotion || '') });
+  }
+  if (!mine.length) return null;
+  // --- what went wrong (in plain words)
+  let missedMate = null, allowedMate = null; const leftOpen = [], missedFree = [];
+  for (const x of mine) {
+    const bm = uciMove(fens[x.i], x.best);
+    if (!missedMate && bm && x.played !== x.best) {
+      const c = new Chess(fens[x.i]); c.move(bm);
+      if (c.isCheckmate()) { missedMate = { ...x, bm }; continue; }
+    }
+    const reply = uciMove(fens[x.i + 1], best[x.i + 1]);
+    if (!allowedMate && reply) {
+      const c = new Chess(fens[x.i + 1]); c.move(reply);
+      if (c.isCheckmate()) { allowedMate = { ...x, reply }; continue; }
+    }
+    if (x.loss >= 2 && reply && reply.captured && VALUE[reply.captured] >= 3 && !(x.m.captured && VALUE[x.m.captured] >= VALUE[reply.captured])) leftOpen.push({ ...x, reply });
+    else if (x.loss >= 1.5 && bm && bm.captured && VALUE[bm.captured] >= 3 && !(x.m.captured && VALUE[x.m.captured] >= VALUE[bm.captured])) missedFree.push({ ...x, bm });
+  }
+  const castled = mine.some(x => /[kq]/.test(x.m.flags));
+  const minorsOut = mine.filter(x => x.i < 20 && 'nb'.includes(x.m.piece) && x.m.from[1] === (side === 'w' ? '1' : '8')).length;
+  let tip;
+  if (missedMate) tip = { k: 'mate', text: `On move ${moveNo(missedMate.i)} there was a checkmate hiding (chess slang: a "mate in one"): ${pieceWord(missedMate.bm.piece)} to ${missedMate.bm.to.toUpperCase()} would have won the game. They are easy to miss! Next time you are attacking, have a quick look: can I checkmate right now?`,
+    show: key('tip', { fen: fens[missedMate.i], played: [], best: [missedMate.bm.from, missedMate.bm.to] }), lesson: missedMate.bm.piece === 'q' ? 'queenmate' : missedMate.bm.piece === 'n' ? 'smothered' : 'backrank' };
+  else if (allowedMate) tip = { k: 'allowed', text: `On move ${moveNo(allowedMate.i)}, after ${moveWords(allowedMate.m)}, ${them} found a checkmate. That one was tricky! A great habit for next time: before each move, have a peek at what they could do to your king.`,
+    show: key('tip', { fen: fens[allowedMate.i + 1], played: [allowedMate.m.from, allowedMate.m.to], best: [allowedMate.reply.from, allowedMate.reply.to] }), lesson: 'backrank' };
+  else if (leftOpen.length && leftOpen.length >= missedFree.length) {
+    const f = leftOpen[0], n = leftOpen.length;
+    tip = { k: 'hung', text: `${n === 1 ? `On move ${moveNo(f.i)}` : `${n} times (first on move ${moveNo(f.i)})`}, a piece was left unguarded where it could be taken (chess slang: a "hung" piece). Everyone does this, even grandmasters! A great habit: before each move, ask "after this, can they take anything of mine?"`,
+      show: key('tip', { fen: fens[f.i + 1], played: [f.m.from, f.m.to], best: [f.reply.from, f.reply.to] }), lesson: 'savepiece' };
+  } else if (missedFree.length) {
+    const f = missedFree[0], n = missedFree.length;
+    const free = !new Chess(fens[f.i]).isAttacked(f.bm.to, opp);
+    tip = { k: free ? 'free' : 'win', text: `${n === 1 ? `On move ${moveNo(f.i)}` : `${n} times (first on move ${moveNo(f.i)})`}, ${free ? `${them} left a piece unguarded` : 'there was a piece to win'}: your ${pieceWord(f.bm.piece)} could have taken their ${pieceWord(f.bm.captured)}${free ? ' (chess slang: a "hanging" piece)' : ''}. A great habit: before each move, look for anything you can take${free ? ' for free' : ''}.`,
+      show: key('tip', { fen: fens[f.i], played: [], best: [f.bm.from, f.bm.to] }), lesson: 'freepiece' };
+  } else if (!castled && moves.length >= 30) tip = { k: 'castle', text: 'Next time, try castling early (chess slang: getting your king out of "the centre"). It tucks your king away safely and brings a rook into the game.', lesson: 'castle' };
+  else if (minorsOut < 2 && moves.length >= 20) tip = { k: 'develop', text: 'Next time, try bringing your knights and bishops out early (chess slang: "development"). By move 10, most of them like to be in the game.', lesson: 'centre' };
+  else tip = { k: 'none', text: `No big mistakes, brilliant! A great habit to keep: before each move, ask what ${them} might be planning.` };
+  // --- what went well
+  const good = [];
+  const won = (chess.isCheckmate() && chess.turn() === opp);
+  if (won) good.push({ k: 'mate', text: 'You finished the game with a checkmate!' });
+  let pounce = null;
+  for (const x of mine) {
+    if (x.i === 0 || x.played !== x.best) continue;
+    const o = x.i - 1, osign = -sign, oloss = Math.min(W[o] * osign, 15) - Math.min(W[o + 1] * osign, 15);
+    if (oloss >= 2 && (!pounce || oloss > pounce.oloss)) pounce = { ...x, oloss };
+  }
+  if (pounce) good.push({ k: 'pounce', text: `On move ${moveNo(pounce.i)}, ${them} slipped up (chess slang: a "blunder") and you spotted it at once: ${moveWords(pounce.m)}. Exactly what Professor Owl would have played!`,
+    show: key('good1', { fen: fens[pounce.i], played: [pounce.m.from, pounce.m.to], best: [] }) });
+  const forks = gameFeats()[side].includes('fork');
+  if (forks) good.push({ k: 'fork', text: 'You attacked two pieces at once with one piece (chess slang: a "fork").' });
+  const grabs = mine.filter(x => x.m.captured && VALUE[x.m.captured] >= 3 && x.loss <= 0.6).length;
+  if (grabs) good.push({ k: 'grab', text: grabs === 1 ? 'You took a piece that was left unguarded.' : `You took ${grabs} pieces that were left unguarded.` });
+  if (!leftOpen.length && mine.length >= 10) good.push({ k: 'safe', text: 'You kept your pieces safe the whole game: nothing was left unguarded for the taking (chess slang: no "hung" pieces).' });
+  if (castled && mine.find(x => /[kq]/.test(x.m.flags)).i < 24) good.push({ k: 'castle', text: 'You castled early and kept your king safe.' });
+  if (minorsOut >= 3) good.push({ k: 'develop', text: 'You brought your knights and bishops out quickly (chess slang: good "development").' });
+  if (mine.filter(x => x.loss < 0.4).length / mine.length >= 0.6) good.push({ k: 'steady', text: 'Most of your moves were strong, careful ones.' });
+  if (!good.length) good.push({ k: 'fight', text: 'You kept going right to the end, and every game makes you stronger.' });
+  // --- how each part of the game went
+  const phaseOf = i => {
+    if (i < 16) return 0;
+    const big = fens[i].split(' ')[0].replace(/[^nbrqNBRQ]/g, '').length;
+    return big <= 6 ? 2 : 1;
+  };
+  const phases = [[], [], []]; mine.forEach(x => phases[phaseOf(x.i)].push(Math.min(x.loss, 5)));
+  const sky = a => { const v = a.reduce((s, x) => s + x, 0) / a.length; return v <= 0.35 ? '☀️' : v <= 0.9 ? '🌤️' : v <= 1.8 ? '⛅' : '🌧️'; };
+  const weather = ['Start', 'Middle', 'End'].map((l, k) => phases[k].length >= 2 ? `${l} ${sky(phases[k])}` : '').filter(Boolean);
+  return { side, name: me, good: good.slice(0, 2), tip, weather };
+}
+async function postMortem() {
+  if (PM && PM.busy) return;
+  const gid = G.id + ply();
+  PM = { busy: true, done: 0, total: ply() + 1, gid }; renderPanels();
+  let A;
+  try { A = await analyseGame((d, n) => { if (PM && PM.busy) { PM.done = d; PM.total = n; if (d % 3 === 0) renderPanels(); } }); }
+  catch (e) { PM = { fail: true, gid }; renderPanels(); return; }
+  const cards = {};
+  for (const s of ['w', 'b']) if (!(G.bot && s !== mySide)) cards[s] = buildCard(A, s);
+  const side = passPlay || WATCH ? 'w' : mySide;
+  PM = { cards, side, gid, shown: { [side]: true } };
+  renderPanels(); pmSay();
+}
+function pmSay() {
+  const c = PM && PM.cards && PM.cards[PM.side]; if (!c) return;
+  voice([nameClip(c.side), 'o-pm-intro', 'o-pm-well', ...c.good.map(g => `o-pm-g-${g.k}`), 'o-pm-practise', `o-pm-t-${c.tip.k}`], '');
+}
+function pmHTML() {
+  if (!isOver() || ply() < 6) return "";
+  if (!PM) return `<button class="btn ghost" data-act="pm">📋 How did I play?</button>`;
+  if (PM.busy) return `<div class="coach"><b>📋 Professor Owl is looking at every move…</b>${PM.done} of ${PM.total}.</div>`;
+  if (PM.fail) return `<button class="btn ghost" data-act="pm">📋 How did I play? (try again)</button>`;
+  const c = PM.cards[PM.side]; if (!c) return '';
+  const showBtn = k => k ? ` <button class="mini" data-act="pmshow" data-k="${k}">👀 Show me</button>` : '';
+  const lessonBtn = id => { const l = LESSONS.find(x => x.id === id); return l ? ` <button class="mini" data-act="pmlesson" data-l="${id}">🎓 Lesson: ${esc(l.title)}</button>` : ''; };
+  // your own card first; the other player's only if you ask (both on one iPad, or watching, show a switch)
+  const others = Object.keys(PM.cards).filter(s => s !== PM.side && PM.cards[s]);
+  const sw = others.map(s => `<button class="mini" data-act="pmside" data-s="${s}">${passPlay || WATCH || PM.shown[s] ? '' : 'See '}${esc(G[s].n)}'s card</button>`).join('');
+  return `<div class="coach pm"><span class="ph" data-act="pmsay" style="cursor:pointer">🔊</span><b>📋 ${esc(c.name)}'s game</b>
+    ${c.good.map(g => `<div class="pmrow">⭐ ${esc(g.text)}${showBtn(g.show)}</div>`).join('')}
+    <div class="pmrow">🎯 <i>Practise:</i> ${esc(c.tip.text)}${showBtn(c.tip.show)}${lessonBtn(c.tip.lesson)}</div>
+    ${c.weather.length ? `<div class="pmrow pmw">${c.weather.join(' · ')}</div>` : ''}
+    ${REPLAY ? '<button class="mini" data-act="turnback">↩ Back to the end</button>' : ''}${sw ? `<div class="pmrow">${sw}</div>` : ''}</div>`;
+}
+
 let TURN = null;          // { busy, done, total } while studying; then { i, ... } the answer
 let REPLAY = null;        // { fen, played, best } while showing the position
 async function evalFen(fen, depth = 9) {
@@ -1019,22 +1170,12 @@ async function evalFen(fen, depth = 9) {
 const lead = v => v < 0.7 ? 'about even' : v < 2 ? 'a little ahead' : v < 4 ? 'a piece ahead' : v < 7 ? 'a rook ahead' : v < 50 ? 'far ahead' : 'about to checkmate';
 async function studyGame() {
   if (TURN && TURN.busy) return;
-  const moves = chess.history({ verbose: true }), id = G.id;
-  const t = new Chess(), fens = [t.fen()];
-  for (const m of moves) { t.move(m); fens.push(t.fen()); }
   const gid = G.id + ply();
-  TURN = { busy: true, done: 0, total: fens.length, gid }; renderPanels();
-  const W = [], best = [];
-  try {
-    for (let i = 0; i < fens.length; i++) {
-      const turn = fens[i].split(' ')[1];
-      const r = new Chess(fens[i]).isGameOver() ? { score: new Chess(fens[i]).isCheckmate() ? -100 : 0, best: '' } : await evalFen(fens[i]);
-      const s = Math.max(-100, Math.min(100, r.score));
-      W.push(turn === 'w' ? s : -s); best.push(r.best);
-      if (!G || G.id !== id) return;
-      TURN.done = i + 1; if (i % 3 === 0) renderPanels();
-    }
-  } catch (e) { TURN = { fail: true, gid }; renderPanels(); return; }
+  TURN = { busy: true, done: 0, total: ply() + 1, gid }; renderPanels();
+  let A;
+  try { A = await analyseGame((d, n) => { if (TURN && TURN.busy) { TURN.done = d; TURN.total = n; if (d % 3 === 0) renderPanels(); } }); }
+  catch (e) { TURN = { fail: true, gid }; renderPanels(); return; }
+  const { moves, fens, W, best } = A;
   const winner = chess.isCheckmate() ? other(chess.turn()) : G.r ? other(G.r) : null;
   let pick = -1, worst = 0;
   for (let i = 0; i < moves.length; i++) {
@@ -1043,13 +1184,25 @@ async function studyGame() {
     const loss = Math.min(W[i] * sign, 15) - Math.min(W[i + 1] * sign, 15);
     if (loss > worst) { worst = loss; pick = i; }
   }
-  if (pick < 0 || worst < 1.5) { TURN = { none: true, winner, gid }; renderPanels(); voice([], TURN_TEXT()); return; }
+  if (pick < 0 || worst < 1.5) { TURN = { none: true, winner, gid }; renderPanels(); voice(TURN_CLIPS(), ''); return; }
   const m = moves[pick], sign = m.color === 'w' ? 1 : -1, opp = other(m.color);
   const b = best[pick], bm = b && new Chess(fens[pick]).move({ from: b.slice(0, 2), to: b.slice(2, 4), promotion: b[4] || 'q' });
   TURN = { i: pick, m, fen: fens[pick], before: W[pick] * sign, after: -W[pick + 1] * sign, best: bm, opp, gid };
-  renderPanels(); voice([], TURN_TEXT());
+  renderPanels(); voice(TURN_CLIPS(), '');
+}
+function TURN_CLIPS() {
+  const T = TURN;
+  if (T.none) return T.winner ? [nameClip(T.winner), 'o-tp-steady'] : ['o-tp-draw'];
+  const out = ['o-tp-1', `o-num-${Math.floor(T.i / 2) + 1}`, nameClip(T.m.color), 'o-tp-played', ...moveClips(T.m)];
+  out.push(...(T.after > 0.7 ? ['o-tp-after', nameClip(T.opp), 'o-tp-winning'] : ['o-tp-close']));
+  if (T.best) out.push('o-tp-better', ...moveClips(T.best));
+  return out;
 }
 const sqName = sq => sq.toUpperCase();
+// names Professor Owl can say; anyone else is called White or Black
+const SPOKEN_NAMES = ['manon', 'margot', 'kiran', 'dad', 'daddy', 'mum', 'mummy', 'papa', 'maman', 'alex', 'owlet', 'pixie', 'wizard', 'dragon', 'friend'];
+const nameClip = side => { const k = nameKey(G[side].n).replace(/[^a-z]/g, ''); return SPOKEN_NAMES.includes(k) ? `o-nm-${k}` : `o-col-${side}`; };
+const moveClips = m => /[kq]/.test(m.flags) ? ['o-tp-castled'] : [`o-pc-${m.piece}`, `o-sq-${m.to}`];
 const moveWords = m => /[kq]/.test(m.flags) ? 'castled' : `${NAMES[m.piece].toLowerCase()} to ${sqName(m.to)}${m.captured ? ', taking a ' + NAMES[m.captured].toLowerCase() : ''}`;
 function TURN_TEXT() {
   const T = TURN;
@@ -1057,7 +1210,7 @@ function TURN_TEXT() {
   const who = G[T.m.color].n, them = G[T.opp].n;
   const before = T.before > 0.7 ? `${who} was ${lead(T.before)}` : T.before < -0.7 ? `${them} was ${lead(-T.before)}` : 'it was about even';
   const after = T.after > 0.7 ? `${them} was ${lead(T.after)}` : 'it was still close';
-  const better = T.best ? ` Better was ${moveWords(T.best)}.` : '';
+  const better = T.best ? ` An even better move was ${moveWords(T.best)}.` : '';
   return `The turning point was move ${Math.floor(T.i / 2) + 1}: ${who} played ${moveWords(T.m)}. Before that, ${before}. Afterwards, ${after}.${better}`;
 }
 function turningHTML() {
@@ -1215,7 +1368,8 @@ async function lessonMove(uci) {
   await animate(mv);
   busy = false;
   const u = (mv.from + mv.to + (mv.promotion || '')).toLowerCase();
-  const ok = L.goal === 'mate' ? chess.isCheckmate()
+  const ok = L.goal === 'safe' ? (() => { const sq = mv.from === L.target ? mv.to : L.target; return !!chess.get(sq) && !chess.board().flat().some(p => p && p.color === mv.color && inDanger(p.square)); })()
+    : L.goal === 'mate' ? chess.isCheckmate()
     : u === L.solution[LESSON.step] || (LESSON.step === 0 && (L.accept || []).includes(u));
   if (!ok) {
     LESSON.msg = ['Not quite', L.hint]; LESSON.hintOn = true;
@@ -1225,7 +1379,7 @@ async function lessonMove(uci) {
     return;
   }
   LESSON.step++;
-  if (L.goal !== 'mate' && LESSON.step < L.solution.length) {
+  if (L.goal === 'moves' && LESSON.step < L.solution.length) {
     LESSON.msg = ['Good!', L.mid || 'Now watch my reply...']; LESSON.hintOn = false;
     render(); voice([`o-les-${L.id}-mid`], '');
     await sleep(900);
@@ -1323,7 +1477,12 @@ document.addEventListener('click', async e => {
       saveRec(); renderPieces(); render(); break;
     case 'league': $('#menu').classList.remove('show'); showLeague(); break;
     case 'turning': unlockAudio(true); studyGame(); break;
-    case 'turnsay': unlockAudio(true); if (TURN) voice([], TURN_TEXT()); break;
+    case 'pm': unlockAudio(true); postMortem(); break;
+    case 'pmsay': unlockAudio(true); pmSay(); break;
+    case 'pmside': if (PM && PM.cards) { PM.side = b.dataset.s; PM.shown[PM.side] = true; REPLAY = null; render(); pmSay(); } break;
+    case 'pmshow': { const v = PM_SHOW[b.dataset.k]; if (v) { REPLAY = v; render(); } break; }
+    case 'pmlesson': { const i = LESSONS.findIndex(l => l.id === b.dataset.l); if (i >= 0) { REPLAY = null; startLesson(i); } break; }
+    case 'turnsay': unlockAudio(true); if (TURN) voice(TURN_CLIPS(), ''); break;
     case 'turnshow': if (TURN && TURN.m) { REPLAY = { fen: TURN.fen, played: [TURN.m.from, TURN.m.to], best: TURN.best ? [TURN.best.from, TURN.best.to] : [] }; render(); } break;
     case 'turnback': REPLAY = null; render(); break;
     case 'suggest': unlockAudio(true); suggest(); break;
@@ -1340,7 +1499,7 @@ document.addEventListener('click', async e => {
       saveRec(); render(); break;
     case 'sound': prefs.sound = !prefs.sound; savePrefs(); renderPanels(); break;
     case 'coach': prefs.coach = !prefs.coach; savePrefs(); renderPanels(); break;
-    case 'voice': prefs.voice = !prefs.voice; savePrefs(); renderPanels(); if (prefs.voice) speak('Knight to F3.'); break;
+    case 'voice': prefs.voice = !prefs.voice; savePrefs(); renderPanels(); if (prefs.voice) voice(['r-start'], ''); break;
     case 'log': if (G) { showMoves(); $('#log').classList.add('show'); } break;
     case 'menu': if (G) { resignArmed = false; menuLabels(); menuHouses(); $('#gcode').innerHTML = ONLINE() ? `Game code <b>${esc(G.id)}</b>` : ''; $('#menu').classList.add('show'); } break;
     case 'close': closeAll(); break;
@@ -1506,7 +1665,7 @@ function tone(t, f0, f1, dur, peak, type = 'sine', attack) {
 // Recorded sounds and voices live in sounds/ (listed in sounds/manifest.json).
 // Anything not recorded falls back to the synthesised sound or the iPad voice.
 let CLIPS = new Set(); const BUF = new Map();
-fetch('sounds/manifest.json', { cache: 'no-store' }).then(r => (r.ok ? r.json() : [])).then(k => { CLIPS = new Set(k); }).catch(() => {});
+const CLIPS_READY = fetch('sounds/manifest.json', { cache: 'no-store' }).then(r => (r.ok ? r.json() : [])).then(k => { CLIPS = new Set(k); }).catch(() => {});
 function clipBuf(key) {
   if (!BUF.has(key)) BUF.set(key, fetch(`sounds/${key}.mp3`).then(r => r.arrayBuffer())
     .then(b => new Promise((res, rej) => AC.decodeAudioData(b, res, rej))).catch(() => null));
@@ -1525,11 +1684,15 @@ let voiceGen = 0;
 async function voice(keys, text) {
   if (!prefs.voice) return;
   if (!AC) unlockAudio();
-  if (!keys.length || !keys.every(k => CLIPS.has(k))) { if (text) speak(text); return; }
+  await CLIPS_READY;
+  const missing = keys.filter(k => !CLIPS.has(k));
+  if (missing.length) console.warn('[voice] no recording for', missing.join(', '));
+  keys = keys.filter(k => CLIPS.has(k));
+  if (!keys.length) return;          // never the iPad's robot voice: only the recorded ones
   const id = ++voiceGen; try { speechSynthesis.cancel(); } catch (e) {}
   const bufs = await Promise.all(keys.map(clipBuf));
   if (id !== voiceGen) return;
-  if (bufs.some(b => !b)) { if (text) speak(text); return; }
+  if (bufs.some(b => !b)) return;
   let t = AC.currentTime + 0.05;
   for (const b of bufs) { const s = AC.createBufferSource(), g = AC.createGain(); g.gain.value = 1; s.buffer = b; s.connect(g).connect(AC.destination); s.start(t); t += b.duration + 0.06; }
 }
@@ -1558,6 +1721,7 @@ function sfx(name, arg) {
   }
 }
 function speak(text) {
+  return;            // retired: only the recorded ElevenLabs voices are used
   if (!prefs.voice || !('speechSynthesis' in window)) return;
   try {
     speechSynthesis.cancel();
@@ -1611,6 +1775,39 @@ window.__wcLines = () => {
     'The opposition: with only kings and pawns, standing your king face to face with theirs can win the race.'];
   end.forEach((t, i) => { L[`o-tip-end-${i}`] = t; });
   for (const [k, t] of Object.entries(SG)) L['o-sg-' + k] = t;
+  // the turning point and the post-mortem, said in pieces
+  const NUMW = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+  const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+  const word = n => n < 20 ? NUMW[n] : n === 100 ? 'one hundred' : TENS[Math.floor(n / 10)] + (n % 10 ? '-' + NUMW[n % 10] : '');
+  for (let n = 1; n <= 100; n++) L[`o-num-${n}`] = word(n) + '.';
+  for (const k of SPOKEN_NAMES) L[`o-nm-${k}`] = k.charAt(0).toUpperCase() + k.slice(1);
+  L['o-col-w'] = 'White'; L['o-col-b'] = 'Black';
+  for (const p of 'pnbrqk') L[`o-pc-${p}`] = 'the ' + NAMES[p].toLowerCase();
+  for (const f of 'abcdefgh') for (let r = 1; r <= 8; r++) L[`o-sq-${f}${r}`] = `to ${f.toUpperCase()}${r}.`;
+  Object.assign(L, {
+    'o-tp-1': 'The turning point was move', 'o-tp-played': 'played', 'o-tp-castled': 'castled.',
+    'o-tp-after': 'After that,', 'o-tp-winning': 'took the lead.', 'o-tp-close': 'After that, it was still close.',
+    'o-tp-better': 'An even better move was', 'o-tp-steady': 'won with lovely, careful play. Well done!',
+    'o-tp-draw': 'What a close game! Well played, both of you!',
+    'o-pm-intro': "here's how you played.", 'o-pm-well': 'Well done!', 'o-pm-practise': 'And one thing to practise:',
+    'o-pm-g-mate': 'You finished the game with a checkmate! Brilliant!',
+    'o-pm-g-pounce': 'Your opponent slipped up, and you spotted it at once. Chess players call that punishing a blunder. Clever you!',
+    'o-pm-g-fork': 'You attacked two pieces at once with one piece. Chess players call that a fork. Wonderful!',
+    'o-pm-g-grab': 'You spotted pieces left unguarded, and took them. Sharp eyes!',
+    'o-pm-g-safe': 'You kept your pieces safe the whole game. Nothing was left unguarded. Very careful!',
+    'o-pm-g-castle': 'You castled early, and kept your king safe and snug.',
+    'o-pm-g-develop': 'You brought your knights and bishops out quickly. Chess players call that good development.',
+    'o-pm-g-steady': 'Most of your moves were strong, careful ones. Lovely chess!',
+    'o-pm-g-fight': 'You kept going right to the end, and every game makes you stronger. I am proud of you!',
+    'o-pm-t-mate': 'There was a checkmate hiding in this game. Tap show me to find it! They are easy to miss. Next time you are attacking, have a quick look: can I checkmate right now?',
+    'o-pm-t-allowed': 'Your opponent found a sneaky checkmate. That one was tricky! A great habit for next time: before each move, have a peek at what they could do to your king.',
+    'o-pm-t-hung': 'A piece was left unguarded, where it could be taken. Chess players call that a hung piece, and everyone does it, even grandmasters! A great habit: before each move, ask, after this, can they take anything of mine?',
+    'o-pm-t-free': 'Your opponent left a piece unguarded, and there was a chance to take it. A great habit: before each move, look for anything you can take for free.',
+    'o-pm-t-win': 'There was a chance to win a piece. A great habit: before each move, look for captures.',
+    'o-pm-t-castle': 'Next time, try castling early. It tucks your king away safely, and brings a rook into the game.',
+    'o-pm-t-develop': 'Next time, try bringing your knights and bishops out early. By move ten, most of them like to be in the game.',
+    'o-pm-t-none': 'No big mistakes, brilliant! A great habit to keep: before each move, ask what your opponent might be planning.',
+  });
   L['o-les-wrong'] = 'Not quite. Have another look.';
   for (const l of LESSONS) {
     L[`o-les-${l.id}-intro`] = l.intro; L[`o-les-${l.id}-hint`] = l.hint; L[`o-les-${l.id}-done`] = l.done;

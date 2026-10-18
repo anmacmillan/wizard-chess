@@ -55,6 +55,20 @@ export const LESSONS = [
     done: 'A skewer: the king in front had to move, and the rook behind it was lost.',
   },
   {
+    id: 'freepiece', group: 'Keep your pieces safe', title: 'Take the free piece',
+    fen: '4k3/8/8/4n3/8/2B5/8/6K1 w - - 0 1', goal: 'moves', solution: ['c3e5'],
+    intro: "Black has left a knight with nothing guarding it. Look at each enemy piece and ask: is anything protecting it? Then take the free one!",
+    hint: 'Your bishop moves diagonally. Which black piece is on its diagonal, with nothing guarding it?', hintSq: ['c3', 'e5'],
+    done: 'A free piece! Before every move, look for anything your opponent has left unguarded.',
+  },
+  {
+    id: 'savepiece', group: 'Keep your pieces safe', title: 'Rescue your piece',
+    fen: '4k3/8/8/4p3/3R4/8/8/6K1 w - - 0 1', goal: 'safe', target: 'd4',
+    intro: "Oh no! Black's pawn is attacking your rook. Move the rook to a square where nothing can take it.",
+    hint: 'Pawns take one square diagonally forward. Find a square the pawn and the king cannot reach.', hintSq: ['d4'],
+    done: 'Safe! Before every move, ask: is anything of mine being attacked? And after my move, can they take anything?',
+  },
+  {
     id: 'centre', group: 'Openings', title: 'Take the centre',
     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', goal: 'moves', solution: ['e2e4'], accept: ['d2d4'],
     intro: 'The four middle squares are the most important on the board. Start the game by putting a pawn in the centre.',
