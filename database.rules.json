@@ -8,6 +8,13 @@
         ".write": "$id.length >= 6 && $id.length <= 24",
         ".validate": "newData.hasChildren(['m', 'w', 'b']) && newData.child('m').isString() && newData.child('m').val().length < 3000"
       }
+    },
+    "tanks": {
+      "$id": {
+        ".read": "$id.length >= 6 && $id.length <= 24",
+        ".write": "$id.length >= 6 && $id.length <= 24",
+        ".validate": "newData.hasChildren(['p', 'seed', 'round'])"
+      }
     }
   }
 }
