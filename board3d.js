@@ -13,13 +13,90 @@ import * as SkeletonUtils from './jsm/utils/SkeletonUtils.js';
 
 // Heroes: animated fantasy characters by Quaternius (RPG Character Pack) as the pieces
 const HERO = {
-  p: { file: 'Rogue', h: 1.0, attack: 'Dagger_Attack', ready: 'Attacking_Idle' },
-  n: { file: 'Warrior', h: 1.2, attack: 'Sword_Attack', ready: 'Idle_Attacking', jump: 'Roll' },
-  b: { file: 'Cleric', h: 1.25, attack: 'Staff_Attack', ready: 'Idle_Weapon' },
-  r: { file: 'Monk', h: 1.2, attack: 'Attack', ready: 'Idle_Attacking' },
-  q: { file: 'Ranger', h: 1.3, attack: 'Bow_Shoot', ready: 'Idle_Attacking' },
-  k: { file: 'Wizard', h: 1.4, attack: 'Spell1', ready: 'Idle_Attacking' },
+  p: { file: 'Rogue', h: 0.74, base: 0.82, attack: 'Dagger_Attack', ready: 'Attacking_Idle' },
+  n: { file: 'Warrior', h: 0.66, attack: 'Sword_Attack', ready: 'Idle_Attacking', jump: 'Roll' },   // rides a horse
+  b: { file: 'Cleric', h: 1.08, attack: 'Staff_Attack', ready: 'Idle_Weapon', hat: 'mitre' },
+  r: { file: 'Monk', h: 1.16, attack: 'Attack', ready: 'Idle_Attacking' },
+  q: { file: 'Ranger', h: 1.34, base: 1.06, attack: 'Bow_Shoot', ready: 'Idle_Attacking', hat: 'tiara' },
+  k: { file: 'Wizard', h: 1.5, base: 1.1, attack: 'Spell1', ready: 'Idle_Attacking', hat: 'crown' },
 };
+// the knight's horse: white horse for White, a dark bay for Black (Quaternius, CC0)
+const HORSE = { w: 'HorseWhite', b: 'Horse', scale: 0.168, saddle: [0, 3.25, -0.35] };
+const HORSE_MAP = { Idle: 'Idle', Walk: 'Walk', Run: 'Gallop', Roll: 'Gallop_Jump', Sword_Attack: 'Attack_Headbutt', RecieveHit: 'Idle_HitReact_Left', Death: 'Death' };
+const RIDER_MAP = { Walk: 'Idle', Run: 'Idle', Roll: 'Idle' };
+
+// ---------- hats: so the king, queen and bishop can be told apart at a glance ----------
+const HAT_M = {
+  gold: new THREE.MeshStandardMaterial({ color: 0xf3c24c, metalness: 0.9, roughness: 0.25, emissive: 0x4a3000, emissiveIntensity: 0.45 }),
+  ruby: new THREE.MeshStandardMaterial({ color: 0xe0102a, roughness: 0.15, emissive: 0x6a0010, emissiveIntensity: 0.8 }),
+  sapphire: new THREE.MeshStandardMaterial({ color: 0x2f6bff, roughness: 0.15, emissive: 0x0a2a90, emissiveIntensity: 0.8 }),
+  pearl: new THREE.MeshStandardMaterial({ color: 0xfff8ee, roughness: 0.3, emissive: 0x4a4440, emissiveIntensity: 0.3 }),
+  mitreW: new THREE.MeshStandardMaterial({ color: 0xfbf4e2, roughness: 0.55, emissive: 0x2a261e, emissiveIntensity: 0.3 }),
+  mitreB: new THREE.MeshStandardMaterial({ color: 0x6a1f8a, roughness: 0.5, emissive: 0x1c0628, emissiveIntensity: 0.4 }),
+};
+function hatMesh(geo, mat, x = 0, y = 0, z = 0) { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; return m; }
+// sizes are in the characters' own units: the head is about 0.9 across, its top about 0.85 above the head bone
+function makeHat(kind, color) {
+  const g = new THREE.Group();
+  if (kind === 'crown') {          // the king: a tall gold crown with a cross on top
+    const band = hatMesh(new THREE.CylinderGeometry(0.44, 0.47, 0.26, 28, 1, true), HAT_M.gold); band.material.side = THREE.DoubleSide; band.position.y = 0.13; g.add(band);
+    g.add(hatMesh(new THREE.TorusGeometry(0.47, 0.035, 8, 28).rotateX(Math.PI / 2), HAT_M.gold, 0, 0.01, 0));
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      g.add(hatMesh(new THREE.ConeGeometry(0.085, 0.3, 8), HAT_M.gold, Math.sin(a) * 0.44, 0.4, Math.cos(a) * 0.44));
+      g.add(hatMesh(new THREE.SphereGeometry(0.05, 10, 8), HAT_M.pearl, Math.sin(a) * 0.44, 0.56, Math.cos(a) * 0.44));
+      g.add(hatMesh(new THREE.SphereGeometry(0.055, 10, 8), i % 2 ? HAT_M.sapphire : HAT_M.ruby, Math.sin(a + 0.39) * 0.475, 0.13, Math.cos(a + 0.39) * 0.475));
+    }
+    // two arches meeting under an orb and cross
+    for (const r of [0, Math.PI / 2]) { const arch = hatMesh(new THREE.TorusGeometry(0.4, 0.035, 8, 24, Math.PI), HAT_M.gold, 0, 0.22, 0); arch.rotation.y = r; g.add(arch); }
+    g.add(hatMesh(new THREE.SphereGeometry(0.09, 14, 10), HAT_M.gold, 0, 0.68, 0));
+    g.add(hatMesh(new THREE.BoxGeometry(0.07, 0.32, 0.07), HAT_M.gold, 0, 0.88, 0));
+    g.add(hatMesh(new THREE.BoxGeometry(0.22, 0.07, 0.07), HAT_M.gold, 0, 0.92, 0));
+  } else if (kind === 'tiara') {   // the queen: a lighter crown of tall and short points with pearls
+    const band = hatMesh(new THREE.CylinderGeometry(0.4, 0.43, 0.16, 28, 1, true), HAT_M.gold); band.material.side = THREE.DoubleSide; band.position.y = 0.08; g.add(band);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2, tall = i % 2 === 0, h = tall ? 0.34 : 0.17;
+      g.add(hatMesh(new THREE.ConeGeometry(0.06, h, 6), HAT_M.gold, Math.sin(a) * 0.41, 0.16 + h / 2, Math.cos(a) * 0.41));
+      g.add(hatMesh(new THREE.SphereGeometry(tall ? 0.055 : 0.04, 10, 8), HAT_M.pearl, Math.sin(a) * 0.41, 0.17 + h, Math.cos(a) * 0.41));
+    }
+    g.add(hatMesh(new THREE.SphereGeometry(0.09, 12, 10), HAT_M.sapphire, 0, 0.1, 0.43));
+    g.add(hatMesh(new THREE.SphereGeometry(0.06, 10, 8), HAT_M.ruby, 0.3, 0.09, 0.3));
+    g.add(hatMesh(new THREE.SphereGeometry(0.06, 10, 8), HAT_M.ruby, -0.3, 0.09, 0.3));
+  } else if (kind === 'mitre') {   // the bishop: a tall pointed mitre with gold trim and a cross
+    const sh = new THREE.Shape();
+    sh.moveTo(-0.4, 0); sh.lineTo(-0.38, 0.45); sh.quadraticCurveTo(-0.3, 0.95, 0, 1.25); sh.quadraticCurveTo(0.3, 0.95, 0.38, 0.45); sh.lineTo(0.4, 0); sh.lineTo(-0.4, 0);
+    const geo = new THREE.ExtrudeGeometry(sh, { depth: 0.56, bevelEnabled: true, bevelSize: 0.06, bevelThickness: 0.06, bevelSegments: 3, curveSegments: 16 });
+    geo.translate(0, 0, -0.28);
+    g.add(hatMesh(geo, color === 'w' ? HAT_M.mitreW : HAT_M.mitreB));
+    g.add(hatMesh(new THREE.BoxGeometry(0.92, 0.12, 0.72), HAT_M.gold, 0, 0.06, 0));           // gold band round the bottom
+    g.add(hatMesh(new THREE.BoxGeometry(0.1, 1.05, 0.04), HAT_M.gold, 0, 0.62, 0.35));         // gold stripe up the front
+    g.add(hatMesh(new THREE.BoxGeometry(0.1, 1.05, 0.04), HAT_M.gold, 0, 0.62, -0.35));
+    g.add(hatMesh(new THREE.BoxGeometry(0.34, 0.09, 0.05), HAT_M.gold, 0, 0.62, 0.37));        // a cross
+    g.add(hatMesh(new THREE.BoxGeometry(0.09, 0.4, 0.05), HAT_M.gold, 0, 0.62, 0.37));
+  }
+  return g;
+}
+
+// ---------- blood splats where a piece falls (cartoon style, they fade over a few moves) ----------
+const splatTex = [];
+function splatTexture(i) {
+  if (splatTex[i]) return splatTex[i];
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const x = c.getContext('2d');
+  let seed = 7 + i * 101; const r = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const blob = (cx, cy, rad, col) => {
+    x.fillStyle = col; x.beginPath();
+    for (let k = 0; k <= 24; k++) { const a = (k / 24) * Math.PI * 2, rr = rad * (0.75 + r() * 0.45); x.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+    x.closePath(); x.fill();
+  };
+  blob(128, 128, 62, '#a3081a');
+  for (let k = 0; k < 9; k++) { const a = r() * Math.PI * 2, d = 60 + r() * 50; blob(128 + Math.cos(a) * d, 128 + Math.sin(a) * d, 6 + r() * 14, '#a3081a'); }
+  for (let k = 0; k < 5; k++) { const a = r() * Math.PI * 2, d = 40 + r() * 30; x.strokeStyle = '#a3081a'; x.lineWidth = 8 + r() * 6; x.lineCap = 'round'; x.beginPath(); x.moveTo(128, 128); x.lineTo(128 + Math.cos(a) * (d + 30), 128 + Math.sin(a) * (d + 30)); x.stroke(); }
+  blob(112, 112, 22, 'rgba(220,40,50,.55)');      // a wet shine
+  blob(104, 104, 7, 'rgba(255,190,190,.7)');
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return (splatTex[i] = t);
+}
 const GLYPH = { w: { k: '♔', q: '♕', r: '♖', b: '♗', n: '♘', p: '♙' }, b: { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' } };
 const glyphTex = {};
 function glyphMaterial(color, type) {
@@ -32,7 +109,7 @@ function glyphMaterial(color, type) {
     g.fillStyle = color === 'w' ? '#2a2230' : '#f6efe0'; g.font = '84px "Apple Symbols","Segoe UI Symbol",serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(GLYPH[color][type] + '\uFE0E', 64, 70);
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-    glyphTex[k] = new THREE.SpriteMaterial({ map: t, depthTest: true });
+    glyphTex[k] = new THREE.SpriteMaterial({ map: t, depthTest: true, transparent: true, alphaTest: 0.1 });
   }
   return glyphTex[k];
 }
@@ -264,6 +341,11 @@ function buildPiece(type, color) {
 }
 
 // ---------- the board ----------
+// hat fit on the head bone: [height, forward, scale]
+const HAT_FIT = { crown: [0.6, 0.0, 0.92], tiara: [0.66, 0.0, 0.9], mitre: [0.55, 0.0, 0.68] };
+// rider's legs: bone -> extra rotation (x, y, z) to sit in the saddle
+const SEAT = { UpperLegL: [-1.45, 0, -0.45], UpperLegR: [-1.45, 0, 0.45], LowerLegL: [1.55, 0, 0], LowerLegR: [1.55, 0, 0] };
+
 export class Board3D {
   constructor(container, hooks = {}) {
     this.el = container;
@@ -275,6 +357,8 @@ export class Board3D {
     this.selected = null;
     this.style = hooks.style || 'heroes';
     this.mixers = new Set();
+    this.riders = new Set();
+    this.splats = [];
     this.heroTpl = null;
     this.lastBoard = null;
     this.loadHeroes();
@@ -481,6 +565,8 @@ export class Board3D {
     try {
       const L = new GLTFLoader(), tpl = {};
       await Promise.all(Object.entries(HERO).map(async ([t, cfg]) => { tpl[t] = await L.loadAsync(`models/${cfg.file}.glb`); }));
+      const [hw, hb] = await Promise.all([L.loadAsync(`models/${HORSE.w}.glb`), L.loadAsync(`models/${HORSE.b}.glb`)]).catch(() => [null, null]);
+      if (hw && hb) this.horseTpl = { w: hw, b: hb };
       this.heroTpl = tpl;
       if (this.style === 'heroes' && this.lastBoard) this.setPosition(this.lastBoard);
     } catch (e) { console.warn('heroes failed to load, using classic pieces', e); }
@@ -491,16 +577,7 @@ export class Board3D {
   }
   useHeroes() { return this.style === 'heroes' && this.heroTpl; }
 
-  buildHero(type, color) {
-    const cfg = HERO[type], src = this.heroTpl[type];
-    const group = new THREE.Group();
-    // the base: marble or obsidian with gold, like the classic pieces
-    const body = color === 'w' ? M.white : M.black;
-    group.add(mesh(lathe('base', BASE), body));
-    ring(group, 0.345, 0.075, 0.022);
-    const model = SkeletonUtils.clone(src.scene);
-    model.scale.setScalar(cfg.h / 3.1);
-    model.position.y = 0.13;
+  tintHero(model, color) {
     model.traverse(o => {
       if (!o.isMesh) return;
       o.castShadow = true; o.receiveShadow = true;
@@ -509,31 +586,104 @@ export class Board3D {
       else { o.material.color.lerp(new THREE.Color(0xfff4e0), 0.35); if (o.material.emissive) o.material.emissive.setHex(0x1a140c); }
       o.material.envMapIntensity = 0.5;
     });
+  }
+  heroBase(group, color, size = 1) {
+    // the base: marble or obsidian with gold, like the classic pieces
+    const base = new THREE.Group();
+    base.add(mesh(lathe('base', BASE), color === 'w' ? M.white : M.black));
+    ring(base, 0.345, 0.075, 0.022);
+    base.scale.set(size, 1, size);
+    group.add(base);
+  }
+  track(model, animations, map = null) {
+    const mixer = new THREE.AnimationMixer(model);
+    this.mixers.add(mixer);
+    return { mixer, clips: Object.fromEntries(animations.map(c => [c.name, c])), map, current: null };
+  }
+  buildKnight(color) {
+    const cfg = HERO.n, group = new THREE.Group();
+    this.heroBase(group, color, 1);
+    const mount = new THREE.Group();            // turns as one: horse and rider
+    mount.rotation.y = color === 'w' ? Math.PI : 0;
+    group.add(mount);
+    const hsrc = this.horseTpl[color];
+    const horse = SkeletonUtils.clone(hsrc.scene);
+    horse.scale.setScalar(HORSE.scale);
+    horse.position.set(0, 0.13, -0.62 * HORSE.scale);     // centre the horse on its square
+    horse.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = true; o.receiveShadow = true; o.material = o.material.clone(); o.material.envMapIntensity = 0.5;
+      if (color === 'b') o.material.color.multiplyScalar(0.55);
+    });
+    mount.add(horse);
+    const rsrc = this.heroTpl.n, rider = SkeletonUtils.clone(rsrc.scene);
+    const rs = cfg.h / 3.1;
+    rider.scale.setScalar(rs);
+    const [sx, sy, sz] = HORSE.saddle;
+    rider.position.set(sx * HORSE.scale, 0.13 + sy * HORSE.scale - 1.01 * rs, (sz - 0.62) * HORSE.scale);
+    this.tintHero(rider, color);
+    mount.add(rider);
+    // sit astride: thighs forward and apart, shins down
+    const seat = [];
+    const q = (x, y, z) => new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z));
+    for (const [name, rot] of Object.entries(SEAT)) { const b = rider.getObjectByName(name); if (b) seat.push({ b, q: q(...rot), out: null, base: new THREE.Quaternion() }); }
+    const badge = new THREE.Sprite(glyphMaterial(color, 'n'));
+    badge.scale.setScalar(0.26); badge.position.set(0.3, 0.24, 0.3);
+    group.add(badge);
+    const tracks = [this.track(rider, rsrc.animations, RIDER_MAP), this.track(horse, hsrc.animations, HORSE_MAP)];
+    group.userData.hero = { tracks, mixer: tracks[0].mixer, model: mount, cfg, color, seat };
+    this.riders.add(group.userData.hero);
+    this.play(group, 'Idle', { offset: Math.random() * 3 });
+    return group;
+  }
+  dropHero(H) {
+    if (!H) return;
+    for (const t of H.tracks || [{ mixer: H.mixer }]) this.mixers.delete(t.mixer);
+    this.riders.delete(H);
+  }
+
+  buildHero(type, color) {
+    if (type === 'n' && this.horseTpl) return this.buildKnight(color);
+    const cfg = HERO[type], src = this.heroTpl[type];
+    const group = new THREE.Group();
+    this.heroBase(group, color, cfg.base || 1);
+    const model = SkeletonUtils.clone(src.scene);
+    model.scale.setScalar(cfg.h / 3.1);
+    model.position.y = 0.13;
+    this.tintHero(model, color);
+    if (cfg.hat) {      // worn on the head bone, so it moves with every animation
+      const head = model.getObjectByName('Head');
+      if (head) { const hat = makeHat(cfg.hat, color); const [y, z, s] = HAT_FIT[cfg.hat]; hat.position.set(0, y, z); hat.scale.setScalar(s); head.add(hat); }
+    }
     model.rotation.y = color === 'w' ? Math.PI : 0;     // face the other side
     group.add(model);
     // a small badge with the chess symbol, so the girls still learn which piece is which
     const badge = new THREE.Sprite(glyphMaterial(color, type));
     badge.scale.setScalar(0.24); badge.position.set(0.26, 0.24, 0.26);
     group.add(badge);
-    const mixer = new THREE.AnimationMixer(model);
-    const clips = Object.fromEntries(src.animations.map(c => [c.name, c]));
-    group.userData.hero = { mixer, clips, model, cfg, color, current: null };
-    this.mixers.add(mixer);
+    const tr = this.track(model, src.animations);
+    group.userData.hero = { tracks: [tr], mixer: tr.mixer, model, cfg, color };
     this.play(group, 'Idle', { offset: Math.random() * 3 });
     return group;
   }
   // crossfade to an animation; once: true plays it one time and holds the last frame
   play(g, name, { once = false, fade = 0.22, offset = 0, speed = 1 } = {}) {
     const H = g.userData.inner && g.userData.inner.userData.hero || g.userData.hero;
-    if (!H || !H.clips[name]) return 0;
-    const a = H.mixer.clipAction(H.clips[name]);
-    a.reset(); a.timeScale = speed;
-    a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity); a.clampWhenFinished = once;
-    if (offset) a.time = offset % H.clips[name].duration;
-    a.play();
-    if (H.current && H.current !== a) H.current.crossFadeTo(a, fade, false);
-    H.current = a;
-    return H.clips[name].duration / speed;
+    if (!H) return 0;
+    let dur = 0;
+    for (const t of H.tracks) {     // a knight has two: the rider and the horse
+      const clip = t.clips[(t.map && t.map[name]) || name];
+      if (!clip) continue;
+      const a = t.mixer.clipAction(clip);
+      a.reset(); a.timeScale = speed;
+      a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity); a.clampWhenFinished = once;
+      if (offset) a.time = offset % clip.duration;
+      a.play();
+      if (t.current && t.current !== a) t.current.crossFadeTo(a, fade, false);
+      t.current = a;
+      if (!dur) dur = clip.duration / speed;
+    }
+    return dur;
   }
   heroOf(g) { return g && g.userData.inner && g.userData.inner.userData.hero; }
   face(g, dir) {   // turn the character to walk towards dir (or back to its side when dir is null)
@@ -556,8 +706,11 @@ export class Board3D {
   }
 
   setPosition(board) {
+    // more pieces than before means a new game, a take-back or another game: wipe the floor
+    const count = b => b ? b.flat().filter(Boolean).length : 0;
+    if (count(board) > count(this.lastBoard)) this.clearSplats();
     this.lastBoard = board;
-    for (const g of this.pieces.values()) { this.scene.remove(g); const H = this.heroOf(g); if (H) this.mixers.delete(H.mixer); }
+    for (const g of this.pieces.values()) { this.scene.remove(g); this.dropHero(this.heroOf(g)); }
     this.pieces.clear();
     for (const row of board) for (const p of row) if (p) this.pieces.set(p.square, this.makePiece(p.type, p.color, p.square));
     this.applyLift();
@@ -606,6 +759,7 @@ export class Board3D {
   async animateMove(mv) {
     const g = this.pieces.get(mv.from);
     if (!g) return;
+    this.fadeSplats();
     if (this.heroOf(g)) return this.animateHero(mv, g);
     const a = sqPos(mv.from), b = sqPos(mv.to);
     this.pieces.delete(mv.from);
@@ -711,7 +865,7 @@ export class Board3D {
       const die = this.play(victim, 'Death', { once: true, fade: 0.15 });
       await new Promise(r => setTimeout(r, die * 1000 + 150));
       this.play(g, 'Idle');
-      const VH = this.heroOf(victim); if (VH) this.mixers.delete(VH.mixer);
+      this.dropHero(this.heroOf(victim));
       this.smash(victim, dir);
       await new Promise(r => setTimeout(r, 250));
       await walk(g.position.clone().setY(0), b, false);
@@ -722,7 +876,7 @@ export class Board3D {
     g.position.copy(b);
     g.userData.sq = mv.to; this.pieces.set(mv.to, g);
     if (mv.promotion) {
-      this.mixers.delete(H.mixer);
+      this.dropHero(H);
       g.remove(g.userData.inner);
       g.userData.inner = this.buildHero(mv.promotion, mv.color);
       g.add(g.userData.inner);
@@ -741,8 +895,27 @@ export class Board3D {
     this.tween(420, p => { l.intensity = power * (1 - p); }).then(() => this.scene.remove(l));
   }
 
+  splat(pos) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ map: splatTexture(this.splats.length % 4), emissiveMap: splatTexture(this.splats.length % 4), emissive: 0xffffff, emissiveIntensity: 0.35, transparent: true, depthWrite: false, roughness: 0.2, opacity: 0.95 }));
+    m.rotation.x = -Math.PI / 2; m.rotation.z = Math.random() * Math.PI * 2;
+    m.position.set(pos.x + rnd(-0.06, 0.06), 0.008, pos.z + rnd(-0.06, 0.06));
+    m.receiveShadow = true; m.renderOrder = 3;     // above the square highlights
+    this.scene.add(m);
+    this.tween(260, p => { m.scale.setScalar(0.2 + 0.9 * easeOut(p)); });
+    this.splats.push(m);
+  }
+  fadeSplats() {
+    this.splats = this.splats.filter(m => {
+      m.material.opacity -= 0.09;
+      if (m.material.opacity > 0.15) return true;
+      this.scene.remove(m); m.geometry.dispose(); m.material.dispose(); return false;
+    });
+  }
+  clearSplats() { this.splats.forEach(m => { this.scene.remove(m); m.geometry.dispose(); m.material.dispose(); }); this.splats = []; }
+
   smash(victim, dir) {
     const pos = victim.position.clone();
+    this.splat(pos);
     const mat = victim.userData.color === 'w' ? M.white : M.black;
     this.scene.remove(victim);
     this.hooks.sfx && this.hooks.sfx('crash');
@@ -794,6 +967,12 @@ export class Board3D {
       return true;
     });
     for (const m of this.mixers) m.update(dt);
+    for (const H of this.riders) for (const s of H.seat) {
+      // if the animation did not touch this bone this frame, start again from last frame's pose
+      if (!(s.out && s.b.quaternion.equals(s.out))) s.base.copy(s.b.quaternion);
+      s.b.quaternion.copy(s.base).multiply(s.q);
+      s.out = s.b.quaternion.clone();
+    }
     for (const g of this.pieces.values()) {   // the selected piece floats and bobs
       const lift = g.userData.lift || 0;
       g.userData.cur = THREE.MathUtils.lerp(g.userData.cur || 0, lift, 0.18);

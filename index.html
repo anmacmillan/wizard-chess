@@ -1477,7 +1477,7 @@ async function boot() {
 
 layout();
 boot();
-window.__wc = { tap: sq => handleTap(sq), get sug() { return SUG; }, explain: u => explainMove(u), get chess() { return chess; }, get state() { return { mySide, orient, pending, passPlay, incoming, busy }; } };
+window.__wc = { tap: sq => handleTap(sq), get board() { return board3d; }, Chess, get sug() { return SUG; }, explain: u => explainMove(u), get chess() { return chess; }, get state() { return { mySide, orient, pending, passPlay, incoming, busy }; } };
 </script>
 </body>
 </html>
