@@ -409,7 +409,9 @@ function loadFromHash() {
   for (let i = 0; i < upto; i++) applyUci(moves[i]);
 
   const turnAtEnd = moves.length % 2 === 0 ? 'w' : 'b';
-  mySide = rec && rec.me ? rec.me : turnAtEnd;
+  // a personal link can say which side its reader plays (&me=w or &me=b)
+  const meParam = new URLSearchParams(location.hash.slice(1)).get('me');
+  mySide = rec && rec.me ? rec.me : meParam === 'w' || meParam === 'b' ? meParam : turnAtEnd;
   orient = passPlay ? turnAtEnd : mySide;
   pending = false; selected = null; busy = false;
   const h = chess.history({ verbose: true }); lastMove = h[h.length - 1] || null;
@@ -704,7 +706,7 @@ function showOwl(n) {
   const sender = n === 0 ? other(mySide) : (n % 2 === 1 ? 'w' : 'b');
   const h = HOUSES[G[sender].h];
   $('#seal').style.setProperty('--c1', h.c1);
-  $('#owlTitle').textContent = n === 0 ? `${G[sender].n} challenges you to Wizard Chess!` : `An owl from ${G[sender].n}!`;
+  $('#owlTitle').textContent = n === 0 ? `Wizard Chess with ${G[other(mySide)].n}!` : `An owl from ${G[sender].n}!`;
   $('#owlSub').textContent = G.r ? 'They have something to tell you.'
     : n === 0 ? `You play ${mySide === 'w' ? 'White, and you move first' : 'Black'}.`
     : 'Open it to see their move.';
