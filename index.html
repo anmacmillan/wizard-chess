@@ -81,6 +81,13 @@
   .coach { text-align: left; padding: 10px 12px; border-radius: 12px; color: #3b2a14; font-size: 15.5px; line-height: 1.35;
     background: radial-gradient(ellipse at 30% 20%, #f1e4c6, #d9c49a 90%); box-shadow: inset 0 0 18px rgba(120,80,30,.3); }
   .coach b { font-family: var(--title); font-size: 14px; display: block; margin-bottom: 2px; }
+  .lrow { display: grid; grid-template-columns: 30px 1fr repeat(5, 30px); align-items: center; gap: 2px; padding: 7px 4px; border-bottom: 1px solid rgba(255,255,255,.08); text-align: left; }
+  .lrow.lhead { font-size: 12px; opacity: .65; text-transform: uppercase; letter-spacing: 1px; }
+  .lname { font-weight: 700; } .lname small { font-weight: 400; opacity: .6; font-size: 11px; }
+  .lnum { text-align: center; } .lnum.b { color: var(--gold); font-weight: 800; }
+  .ltro { grid-column: 2 / -1; font-size: 20px; letter-spacing: 2px; }
+  .lres { text-align: left; padding: 4px 2px; font-size: 15px; } .lres small { opacity: .65; }
+  #league .card { max-height: 88vh; overflow-y: auto; }
   .coach .ph { float: right; font-style: italic; font-size: 13px; opacity: .7; }
   .hrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0 4px; }
   .lgroup { font-family: var(--title); color: var(--gold); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; margin: 14px 0 4px; }
@@ -249,6 +256,7 @@
       <button class="icon" data-act="sound" title="Sound">🔊</button>
       <button class="icon" data-act="voice" title="Spoken moves">🗣️</button>
       <button class="icon" data-act="coach" title="Professor Owl">🎓</button>
+      <button class="icon" data-act="league" title="Scoreboard">🏆</button>
       <button class="icon" data-act="log" title="Moves">📜</button>
       <button class="icon" data-act="menu" title="Menu">⚙️</button>
     </div>
@@ -294,6 +302,7 @@
     <label class="check-row friendOnly"><input type="checkbox" id="ppBox"> Both players on this iPad</label>
     <button class="btn" style="width:100%" id="beginBtn">Begin the game</button>
     <button class="btn ghost" style="width:100%;margin-top:10px" data-act="lessons">🎓 Lessons with Professor Owl</button>
+    <button class="btn ghost" style="width:100%;margin-top:10px" data-act="league">🏆 Scoreboard and trophies</button>
     <div class="games" id="joinBox">
       <h2>Join a friend's game</h2>
       <div class="row"><input type="text" id="joinCode" maxlength="8" autocomplete="off" autocapitalize="characters" placeholder="Game code" class="codein"><button class="btn ghost" id="joinBtn" style="flex:none">Join</button></div>
@@ -340,6 +349,7 @@
 <div class="overlay" id="log"><div class="card"><h2>The moves so far</h2><div id="moves"></div><button class="btn" data-act="close">Close</button></div></div>
 
 <!-- Lessons -->
+<div class="overlay" id="league"><div class="card"><h2>🏆 Scoreboard</h2><div id="leagueBody"></div><button class="btn" data-act="close" style="width:100%;margin-top:12px">Close</button></div></div>
 <div class="overlay" id="lessonsOv"><div class="card"><h2>🎓 Lessons with Professor Owl</h2><div id="lessonList"></div><button class="btn" data-act="close" style="width:100%;margin-top:10px">Close</button></div></div>
 
 <div id="toast"></div>
@@ -461,6 +471,8 @@ function saveRec() {
   list.unshift({ id: G.id, url: urlOf(), ply: ply(), watch: WATCH, me: passPlay || WATCH ? null : mySide, pp: passPlay, bot: G.bot || 0, inv: G.invited, wn: G.w.n, bn: G.b.n, over: isOver(), t: Date.now() });
   store.set('wc:games', list.slice(0, 25));
   history.replaceState(null, '', hashOf());
+  if (isOver()) recordResult();
+  if (TURN && TURN.gid !== G.id + ply()) { TURN = null; REPLAY = null; }
 }
 
 function applyUci(u) { return chess.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] && u[4].toLowerCase() }); }
@@ -510,6 +522,7 @@ function kingSquare(color) {
   return null;
 }
 function renderSquares() {
+  if (REPLAY) { board3d.setHighlights({ last: REPLAY.played, hints: REPLAY.best }); return; }
   const targets = selected ? chess.moves({ square: selected, verbose: true }) : [];
   board3d.setHighlights({
     last: lastMove ? [lastMove.from, lastMove.to] : [],
@@ -521,7 +534,7 @@ function renderSquares() {
 }
 function renderPieces() {
   board3d.setOrientation(orient);
-  board3d.setPosition(chess.board());
+  board3d.setPosition(REPLAY ? new Chess(REPLAY.fen).board() : chess.board());
 }
 
 function captures() {
@@ -559,7 +572,7 @@ function actionHTML() {
     return `<div class="status big">${e.title}</div><div class="sub">${e.sub}</div>` +
       (WATCH ? '' : pending ? `<button class="btn pulse" data-act="send">🦉 Send it to ${to}</button>` : ONLINE() ? `<button class="btn ghost" data-act="share">🦉 Tell ${to}</button>` : '') +
       (G.bot && !G.r && chess.turn() === mySide && ply() >= 2 ? `<button class="btn ghost" data-act="botundo">↩ Take back my last move</button>` : '') +
-      `<button class="btn ghost" data-act="new">New game</button>`;
+      turningHTML() + `<button class="btn ghost" data-act="league">🏆 Scoreboard</button><button class="btn ghost" data-act="new">New game</button>`;
   }
   if (WATCH) {
     const last = lastMove ? `<div class="sub">${esc(G[lastMove.color].n)} played ${esc(lastMove.san)}</div>` : '';
@@ -841,6 +854,221 @@ function sugHTML() {
   return `<div class="coach" data-act="sugsay" style="cursor:pointer"><span class="ph">🔊</span><b>💡 ${esc(s.title)}</b>${esc(s.text)}</div>`;
 }
 
+// ---------- 🏆 the scoreboard: every finished game, shared by every iPad (wcp/WCLEAGUE in the database) ----------
+const LEAGUE_URL = id => `${DB}/wcp/WCLEAGUE/r${id ? '/' + encodeURIComponent(id) : ''}.json`;
+const nameKey = n => String(n || '').trim().toLowerCase();
+const isBotName = n => Object.values(BOTS).some(b => b.name === n);
+function leagueCache() { return store.get('wc:league', {}); }
+function leagueSave(c) { store.set('wc:league', c); }
+// what each side did in the game, for the trophies
+function gameFeats() {
+  const t = new Chess(), out = { w: [], b: [] };
+  for (const m of chess.history({ verbose: true })) {
+    t.move(m);
+    const f = out[m.color];
+    if (/[kq]/.test(m.flags) && !f.includes('castle')) f.push('castle');
+    if (m.promotion && !f.includes('promo')) f.push('promo');
+    if (m.captured === 'q' && !f.includes('queen')) f.push('queen');
+    if (!f.includes('fork') && 'nbrqp'.includes(m.piece)) {
+      const them = m.color === 'w' ? 'b' : 'w';
+      const hit = t.board().flat().filter(p => p && p.color === them && (p.type === 'k' || VALUE[p.type] >= 3) && t.attackers(p.square, m.color).includes(m.to));
+      const safe = !t.isAttacked(m.to, them) || t.isAttacked(m.to, m.color);
+      if (hit.length >= 2 && safe) f.push('fork');
+    }
+  }
+  return out;
+}
+function resultRecord() {
+  const over = chess.isCheckmate() ? 'mate' : G.r ? 'resign' : 'draw';
+  const r = chess.isCheckmate() ? other(chess.turn()) : G.r ? other(G.r) : 'd';
+  return { w: G.w.n, b: G.b.n, r, how: over, n: ply(), t: Date.now(), bot: G.bot ? other(mySide) : '', lv: G.bot || 0, f: gameFeats() };
+}
+async function recordResult() {
+  if (!G || G.lesson || WATCH || !isOver()) return;
+  const c = leagueCache(), old = c[G.id];
+  if (old && old.n === ply() && old.r !== undefined) return;       // already recorded
+  const before = trophiesByPlayer(c);
+  const rec = resultRecord(); rec.pending = true;
+  c[G.id] = rec; leagueSave(c);
+  // new trophies for the people in this game
+  const after = trophiesByPlayer(c);
+  for (const n of [rec.w, rec.b]) {
+    if (isBotName(n)) continue;
+    const k = nameKey(n), was = new Set((before[k] || []).map(t => t.id));
+    const fresh = (after[k] || []).filter(t => !was.has(t.id));
+    fresh.forEach((t, i) => setTimeout(() => { toast(`🏆 ${n} earned a trophy: ${t.e} ${t.name}!`); sfx('chime'); }, 2500 + i * 2600));
+  }
+  pushLeague();
+}
+async function pushLeague() {
+  if (!DB) return;
+  const c = leagueCache();
+  for (const [id, rec] of Object.entries(c)) {
+    if (!rec.pending) continue;
+    const { pending, ...body } = rec;
+    try { const r = await fetch(LEAGUE_URL(id), { method: 'PUT', body: JSON.stringify({ ...body, f: JSON.stringify(body.f) }) }); if (r.ok) { rec.pending = false; } } catch (e) {}
+  }
+  leagueSave(c);
+}
+async function pullLeague() {
+  if (!DB) return leagueCache();
+  try {
+    const r = await fetch(LEAGUE_URL());
+    const d = r.ok ? await r.json() : null;
+    const c = leagueCache();
+    if (d && typeof d === 'object') for (const [id, rec] of Object.entries(d)) {
+      if (!rec || !rec.w) continue;
+      if (c[id] && c[id].pending) continue;
+      let f = rec.f; try { f = typeof f === 'string' ? JSON.parse(f) : f; } catch (e) { f = null; }
+      c[id] = { ...rec, f: f || { w: [], b: [] } };
+    }
+    leagueSave(c);
+    pushLeague();
+    return c;
+  } catch (e) { return leagueCache(); }
+}
+const TROPHIES = [
+  ['first', '🥇', 'First win', s => s.wins >= 1],
+  ['mate', '👑', 'First checkmate', s => s.mates >= 1],
+  ['castle', '🏰', 'Castled', s => s.feats.has('castle')],
+  ['fork', '🍴', 'Played a fork', s => s.feats.has('fork')],
+  ['queen', '👸', 'Captured a queen', s => s.feats.has('queen')],
+  ['promo', '✨', 'Made a new queen', s => s.feats.has('promo')],
+  ['quick', '⚡', 'Checkmate in 20 moves', s => s.quick],
+  ['streak', '🔥', 'Three wins in a row', s => s.best >= 3],
+  ['five', '🌟', 'Five wins', s => s.wins >= 5],
+  ['ten', '🎖️', 'Ten games played', s => s.games >= 10],
+  ['owlet', '🐣', 'Beat Owlet', s => s.beat.has(1)],
+  ['pixie', '🧚', 'Beat Pixie', s => s.beat.has(2)],
+  ['wizard', '🧙', 'Beat Wizard', s => s.beat.has(3)],
+  ['dragon', '🐉', 'Beat Dragon', s => s.beat.has(4)],
+].map(([id, e, name, test]) => ({ id, e, name, test }));
+function playerStats(results) {
+  const P = {};
+  const list = Object.values(results).filter(r => r && r.w && r.b).sort((a, b) => a.t - b.t);
+  for (const r of list) for (const side of ['w', 'b']) {
+    const n = r[side], k = nameKey(n);
+    const s = P[k] || (P[k] = { name: n, bot: isBotName(n), games: 0, wins: 0, draws: 0, losses: 0, mates: 0, quick: false, run: 0, best: 0, feats: new Set(), beat: new Set() });
+    s.name = n; s.games++;
+    ((r.f && r.f[side]) || []).forEach(x => s.feats.add(x));
+    if (r.r === 'd') { s.draws++; s.run = 0; }
+    else if (r.r === side) {
+      s.wins++; s.run++; s.best = Math.max(s.best, s.run);
+      if (r.how === 'mate') { s.mates++; if (r.n <= 40) s.quick = true; }
+      if (r.lv && r.bot && r.bot !== side) s.beat.add(+r.lv);
+    } else { s.losses++; s.run = 0; }
+  }
+  for (const s of Object.values(P)) { s.points = s.wins + s.draws / 2; s.trophies = s.bot ? [] : TROPHIES.filter(t => t.test(s)); }
+  return P;
+}
+function trophiesByPlayer(results) { const P = playerStats(results), out = {}; for (const [k, s] of Object.entries(P)) out[k] = s.trophies; return out; }
+let leagueTab = 'week';
+const weekStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); };
+function leagueHTML(results) {
+  const all = Object.values(results).filter(r => r && r.w && r.b);
+  const inTab = leagueTab === 'week' ? all.filter(r => r.t >= weekStart()) : all;
+  const P = playerStats(Object.fromEntries(inTab.map((r, i) => [i, r])));
+  const trophies = playerStats(results);       // trophies are for keeps, whichever tab
+  const rows = Object.entries(P).sort(([, a], [, b]) => b.points - a.points || b.wins - a.wins || a.games - b.games);
+  const tabs = `<div class="choices two" style="margin:8px 0 10px">${[['week', 'This week'], ['all', 'All time']].map(([k, l]) => `<button class="choice ${leagueTab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>`;
+  if (!rows.length) return tabs + `<p class="sub">No finished games ${leagueTab === 'week' ? 'this week' : 'yet'}. Every game that ends, on any iPad, lands here.</p>`;
+  const medal = i => ['🥇', '🥈', '🥉'][i] || `${i + 1}.`;
+  const table = rows.map(([k, s], i) => `<div class="lrow"><span class="lpos">${medal(i)}</span><span class="lname">${esc(s.name)}${s.bot ? ' <small>computer</small>' : ''}</span>
+      <span class="lnum">${s.games}</span><span class="lnum">${s.wins}</span><span class="lnum">${s.draws}</span><span class="lnum">${s.losses}</span><span class="lnum b">${s.points}</span>
+      ${trophies[k] && trophies[k].trophies.length ? `<div class="ltro">${trophies[k].trophies.map(t => `<span title="${esc(t.name)}">${t.e}</span>`).join('')}</div>` : ''}</div>`).join('');
+  const day = t => new Date(t).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  const recent = inTab.sort((a, b) => b.t - a.t).slice(0, 12).map(r => {
+    const how = r.how === 'mate' ? `checkmate in ${Math.ceil(r.n / 2)} moves` : r.how === 'resign' ? 'by resignation' : `${Math.ceil(r.n / 2)} moves`;
+    const txt = r.r === 'd' ? `${esc(r.w)} and ${esc(r.b)} drew` : `${esc(r[r.r])} beat ${esc(r[r.r === 'w' ? 'b' : 'w'])}`;
+    return `<div class="lres"><small>${day(r.t)}</small> ${txt} <small>· ${how}</small></div>`;
+  }).join('');
+  return tabs + `<div class="lrow lhead"><span class="lpos"></span><span class="lname">Player</span><span class="lnum">P</span><span class="lnum">W</span><span class="lnum">D</span><span class="lnum">L</span><span class="lnum b">Pts</span></div>${table}
+    <h3 class="lgroup">Trophies</h3><div class="sub" style="text-align:left">${TROPHIES.map(t => `${t.e} ${esc(t.name)}`).join(' · ')}</div>
+    <h3 class="lgroup">Recent games</h3>${recent}`;
+}
+let leagueData = null;
+async function showLeague() {
+  $('#leagueBody').innerHTML = leagueHTML(leagueData || leagueCache());
+  $('#league').classList.add('show');
+  leagueData = await pullLeague();
+  if ($('#league').classList.contains('show')) $('#leagueBody').innerHTML = leagueHTML(leagueData);
+}
+$('#leagueBody').addEventListener('click', e => {
+  const b = e.target.closest('[data-tab]'); if (!b) return;
+  leagueTab = b.dataset.tab; $('#leagueBody').innerHTML = leagueHTML(leagueData || leagueCache());
+});
+
+// ---------- 🦉 the turning point: Professor Owl finds the move that changed the game ----------
+let TURN = null;          // { busy, done, total } while studying; then { i, ... } the answer
+let REPLAY = null;        // { fen, played, best } while showing the position
+async function evalFen(fen, depth = 9) {
+  const w = await engine();
+  return new Promise((res, rej) => {
+    let score = 0;
+    const t = setTimeout(() => rej(new Error('eval timeout')), 20000);
+    w.onmessage = e => {
+      const line = String(e.data);
+      const m = / score (cp|mate) (-?\d+)/.exec(line);
+      if (m) score = m[1] === 'cp' ? +m[2] / 100 : (+m[2] > 0 ? 100 : -100);
+      const b = /^bestmove (\S+)/.exec(line);
+      if (b) { clearTimeout(t); res({ score, best: b[1] }); }
+    };
+    w.postMessage('setoption name Skill Level value 20'); w.postMessage('position fen ' + fen); w.postMessage('go depth ' + depth);
+  });
+}
+const lead = v => v < 0.7 ? 'about even' : v < 2 ? 'a little ahead' : v < 4 ? 'a piece ahead' : v < 7 ? 'a rook ahead' : v < 50 ? 'far ahead' : 'about to checkmate';
+async function studyGame() {
+  if (TURN && TURN.busy) return;
+  const moves = chess.history({ verbose: true }), id = G.id;
+  const t = new Chess(), fens = [t.fen()];
+  for (const m of moves) { t.move(m); fens.push(t.fen()); }
+  const gid = G.id + ply();
+  TURN = { busy: true, done: 0, total: fens.length, gid }; renderPanels();
+  const W = [], best = [];
+  try {
+    for (let i = 0; i < fens.length; i++) {
+      const turn = fens[i].split(' ')[1];
+      const r = new Chess(fens[i]).isGameOver() ? { score: new Chess(fens[i]).isCheckmate() ? -100 : 0, best: '' } : await evalFen(fens[i]);
+      const s = Math.max(-100, Math.min(100, r.score));
+      W.push(turn === 'w' ? s : -s); best.push(r.best);
+      if (!G || G.id !== id) return;
+      TURN.done = i + 1; if (i % 3 === 0) renderPanels();
+    }
+  } catch (e) { TURN = { fail: true, gid }; renderPanels(); return; }
+  const winner = chess.isCheckmate() ? other(chess.turn()) : G.r ? other(G.r) : null;
+  let pick = -1, worst = 0;
+  for (let i = 0; i < moves.length; i++) {
+    const mover = moves[i].color; if (winner && mover === winner) continue;
+    const sign = mover === 'w' ? 1 : -1;
+    const loss = Math.min(W[i] * sign, 15) - Math.min(W[i + 1] * sign, 15);
+    if (loss > worst) { worst = loss; pick = i; }
+  }
+  if (pick < 0 || worst < 1.5) { TURN = { none: true, winner, gid }; renderPanels(); voice([], TURN_TEXT()); return; }
+  const m = moves[pick], sign = m.color === 'w' ? 1 : -1, opp = other(m.color);
+  const b = best[pick], bm = b && new Chess(fens[pick]).move({ from: b.slice(0, 2), to: b.slice(2, 4), promotion: b[4] || 'q' });
+  TURN = { i: pick, m, fen: fens[pick], before: W[pick] * sign, after: -W[pick + 1] * sign, best: bm, opp, gid };
+  renderPanels(); voice([], TURN_TEXT());
+}
+const sqName = sq => sq.toUpperCase();
+const moveWords = m => /[kq]/.test(m.flags) ? 'castled' : `${NAMES[m.piece].toLowerCase()} to ${sqName(m.to)}${m.captured ? ', taking a ' + NAMES[m.captured].toLowerCase() : ''}`;
+function TURN_TEXT() {
+  const T = TURN;
+  if (T.none) return T.winner ? `No single big mistake. ${G[T.winner].n} won with steady, careful play. Well done!` : 'A close game with no big mistakes. Well played, both of you!';
+  const who = G[T.m.color].n, them = G[T.opp].n;
+  const before = T.before > 0.7 ? `${who} was ${lead(T.before)}` : T.before < -0.7 ? `${them} was ${lead(-T.before)}` : 'it was about even';
+  const after = T.after > 0.7 ? `${them} was ${lead(T.after)}` : 'it was still close';
+  const better = T.best ? ` Better was ${moveWords(T.best)}.` : '';
+  return `The turning point was move ${Math.floor(T.i / 2) + 1}: ${who} played ${moveWords(T.m)}. Before that, ${before}. Afterwards, ${after}.${better}`;
+}
+function turningHTML() {
+  if (!isOver() || ply() < 6) return '';
+  if (!TURN) return `<button class="btn ghost" data-act="turning">🦉 What changed the game?</button>`;
+  if (TURN.busy) return `<div class="coach"><b>🦉 Professor Owl is studying the game…</b>Looking at every move: ${TURN.done} of ${TURN.total}.</div>`;
+  if (TURN.fail) return `<div class="coach"><b>🦉 Professor Owl got muddled</b>Try again in a moment.</div><button class="btn ghost" data-act="turning">🦉 Try again</button>`;
+  return `<div class="coach" data-act="turnsay" style="cursor:pointer"><span class="ph">🔊</span><b>🦉 The turning point</b>${esc(TURN_TEXT())}</div>` +
+    (TURN.m ? (REPLAY ? `<button class="btn ghost" data-act="turnback">↩ Back to the end</button>` : `<button class="btn ghost" data-act="turnshow">👀 Show me</button>`) : '');
+}
+
 function render() {
   if (!G) return;
   renderSquares();
@@ -1083,7 +1311,7 @@ document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]');
   if (b) unlockAudio();
   if (e.target.id === 'latest') { const r = getRec(G.id); if (r) location.href = r.url; return; }
-  if (!b) { if (e.target.id === 'menu' || e.target.id === 'log' || e.target.id === 'lessonsOv') { $('#lessonsOv').classList.remove('show'); if (G) closeAll(); } return; }
+  if (!b) { if (e.target.id === 'menu' || e.target.id === 'log' || e.target.id === 'lessonsOv' || e.target.id === 'league') { $('#lessonsOv').classList.remove('show'); $('#league').classList.remove('show'); if (G) closeAll(); } return; }
   switch (b.dataset.act) {
     case 'send': send(); break;
     case 'owlsay': { unlockAudio(true); const t = coachTipCached(); voice(t[4] ? [t[4]] : [], `${t[1]}. ${t[2]}`); break; }
@@ -1093,6 +1321,11 @@ document.addEventListener('click', async e => {
       botGen++; chess.undo(); chess.undo(); SUG = null;
       { const h = chess.history({ verbose: true }); lastMove = h[h.length - 1] || null; }
       saveRec(); renderPieces(); render(); break;
+    case 'league': $('#menu').classList.remove('show'); showLeague(); break;
+    case 'turning': unlockAudio(true); studyGame(); break;
+    case 'turnsay': unlockAudio(true); if (TURN) voice([], TURN_TEXT()); break;
+    case 'turnshow': if (TURN && TURN.m) { REPLAY = { fen: TURN.fen, played: [TURN.m.from, TURN.m.to], best: TURN.best ? [TURN.best.from, TURN.best.to] : [] }; render(); } break;
+    case 'turnback': REPLAY = null; render(); break;
     case 'suggest': unlockAudio(true); suggest(); break;
     case 'sugsay': { unlockAudio(true); const g = sugNow(); if (g && g.key) voice([g.key], g.text); break; }
     case 'lnext': if (LESSON) startLesson(LESSON.i + 1); break;
@@ -1151,7 +1384,7 @@ function menuLabels() {
   $('#resignBtn').textContent = 'Resign';
   $('#resignBtn').style.display = isOver() || WATCH ? 'none' : '';
 }
-function closeAll() { for (const id of ['menu', 'log', 'promo', 'lessonsOv']) $('#' + id).classList.remove('show'); if (G) $('#setup').classList.remove('show'); }
+function closeAll() { for (const id of ['menu', 'log', 'promo', 'lessonsOv', 'league']) $('#' + id).classList.remove('show'); if (G) $('#setup').classList.remove('show'); }
 function showMoves() {
   const h = chess.history();
   let out = '';
