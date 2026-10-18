@@ -83,6 +83,9 @@
   .coach b { font-family: var(--title); font-size: 14px; display: block; margin-bottom: 2px; }
   .coach .ph { float: right; font-style: italic; font-size: 13px; opacity: .7; }
   .hrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0 4px; }
+  .lgroup { font-family: var(--title); color: var(--gold); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; margin: 14px 0 4px; }
+  .lesson { display: flex; justify-content: space-between; width: 100%; text-align: left; padding: 10px 12px; margin-top: 6px; border-radius: 10px; background: rgba(255,255,255,.05); font-size: 17px; }
+  .lesson .tick { color: #7be38a; }
   .hrow button { padding: 8px 2px; border-radius: 10px; font-family: var(--title); font-size: 12px; font-weight: 700; color: var(--ink);
     background: rgba(255,255,255,.06); border: 2px solid transparent; }
   .hrow button.on { border-color: var(--gold); background: rgba(217,180,90,.18); }
@@ -276,6 +279,7 @@
     <div class="field"><label>Their house</label><div class="choices" id="oppHouse"></div></div>
     <label class="check-row"><input type="checkbox" id="ppBox"> Both players on this iPad</label>
     <button class="btn" style="width:100%" id="beginBtn">Begin the game</button>
+    <button class="btn ghost" style="width:100%;margin-top:10px" data-act="lessons">🎓 Lessons with Professor Owl</button>
     <div class="games" id="joinBox">
       <h2>Join a friend's game</h2>
       <div class="row"><input type="text" id="joinCode" maxlength="8" autocomplete="off" autocapitalize="characters" placeholder="Game code" class="codein"><button class="btn ghost" id="joinBtn" style="flex:none">Join</button></div>
@@ -310,6 +314,7 @@
     <button class="btn ghost" data-act="copy">Copy the game link</button>
     <button class="btn ghost" data-act="pp" id="ppBtn"></button>
     <button class="btn ghost" data-act="resign" id="resignBtn">Resign</button>
+    <button class="btn ghost" data-act="lessons">🎓 Lessons</button>
     <button class="btn ghost" data-act="new">New game / my games</button>
     <button class="btn" data-act="close">Close</button>
   </div>
@@ -318,6 +323,9 @@
 <!-- Move list -->
 <div class="overlay" id="log"><div class="card"><h2>The moves so far</h2><div id="moves"></div><button class="btn" data-act="close">Close</button></div></div>
 
+<!-- Lessons -->
+<div class="overlay" id="lessonsOv"><div class="card"><h2>🎓 Lessons with Professor Owl</h2><div id="lessonList"></div><button class="btn" data-act="close" style="width:100%;margin-top:10px">Close</button></div></div>
+
 <div id="toast"></div>
 
 <script src="firebase-config.js"></script>
@@ -325,6 +333,7 @@
 <script type="module">
 import { Chess } from './chess.js';
 import { Board3D } from './board3d.js';
+import { LESSONS } from './lessons.js';
 
 const $ = s => document.querySelector(s);
 const HOUSES = {
@@ -363,6 +372,7 @@ let selected = null;
 let busy = false;
 let lastMove = null;
 let incoming = null;     // opponent's move waiting to be revealed
+let LESSON = null;       // { i, l, step, msg, done, hintOn } while doing a lesson
 
 // ---------- the game lives in the link ----------
 function parseHash() {
@@ -395,6 +405,7 @@ const recipient = () => (passPlay ? chess.turn() : other(mySide));
 function games() { return store.get('wc:games', []); }
 function getRec(id) { return games().find(r => r.id === id); }
 function saveRec() {
+  if (!G || G.lesson) return;
   const list = games().filter(r => r.id !== G.id);
   list.unshift({ id: G.id, url: urlOf(), ply: ply(), me: passPlay ? null : mySide, pp: passPlay, inv: G.invited, wn: G.w.n, bn: G.b.n, over: isOver(), t: Date.now() });
   store.set('wc:games', list.slice(0, 25));
@@ -452,6 +463,7 @@ function renderSquares() {
     selected,
     targets: targets.map(m => ({ to: m.to, cap: !!m.captured })),
     check: chess.inCheck() ? kingSquare(chess.turn()) : null,
+    hints: hintSquares(),
   });
 }
 function renderPieces() {
@@ -470,7 +482,7 @@ function panelHTML(side) {
   const mine = caps[side].slice().sort((a, b) => VALUE[b] - VALUE[a]);
   const score = s => caps[s].reduce((t, x) => t + VALUE[x], 0);
   const adv = score(side) - score(other(side));
-  const you = !passPlay && side === mySide ? ' (you)' : '';
+  const you = !passPlay && side === mySide && !G.lesson ? ' (you)' : '';
   return `<div class="crest" style="--c1:${h.c1};--c2:${h.c2}">${esc(p.n.charAt(0).toUpperCase())}</div>
     <div class="pinfo"><div class="pname">${esc(p.n)}${you}</div><div class="phouse">${h.name} · ${side === 'w' ? 'White' : 'Black'}</div></div>
     <div class="caps">${mine.map(t => `<img src="${img(other(side), t)}" alt="">`).join('')}${adv > 0 ? `<span class="adv">+${adv}</span>` : ''}</div>`;
@@ -537,11 +549,11 @@ function coachTip() {
   const phase = ply < 16 ? 'Opening' : (big.length <= 6 || (!pieces.some(p => p.type === 'q') && big.length <= 8)) ? 'Endgame' : 'Middlegame';
   const S = sq => sq.toUpperCase();
   const nm = t => NAMES[t].toLowerCase();
-  if (chess.inCheck()) return [phase, 'Check!', 'Your king is attacked. Three ways out: move the king, block the attack, or capture the attacker.'];
+  if (chess.inCheck()) return [phase, 'Check!', 'Your king is attacked. Three ways out: move the king, block the attack, or capture the attacker.', [kingSquare(me)]];
   // checkmate in one?
   for (const m of chess.moves({ verbose: true })) {
     chess.move(m); const mate = chess.isCheckmate(); chess.undo();
-    if (mate) return [phase, 'Checkmate in one!', `There is a move that wins the game right now. Look closely at your ${nm(m.piece)}...`];
+    if (mate) return [phase, 'Checkmate in one!', `There is a move that wins the game right now. Look closely at your ${nm(m.piece)}...`, [m.from]];
   }
   // a piece to win, or a piece in danger
   let free = null, risk = null;
@@ -556,11 +568,11 @@ function coachTip() {
       if ((!chess.isAttacked(p.square, me) || cheap) && (!risk || VALUE[p.type] > VALUE[risk.type])) risk = p;
     }
   }
-  if (risk && (!free || VALUE[risk.type] >= VALUE[free.type])) return [phase, 'Watch out!', `Your ${nm(risk.type)} on ${S(risk.square)} can be taken. Move it, or protect it with another piece.`];
-  if (free) return [phase, 'A piece to win!', `${colourName(them)}'s ${nm(free.type)} on ${S(free.square)} is not safe. Can you capture it?`];
+  if (risk && (!free || VALUE[risk.type] >= VALUE[free.type])) return [phase, 'Watch out!', `Your ${nm(risk.type)} on ${S(risk.square)} can be taken. Move it, or protect it with another piece.`, [risk.square]];
+  if (free) return [phase, 'A piece to win!', `${colourName(them)}'s ${nm(free.type)} on ${S(free.square)} is not safe. Can you capture it?`, [free.square]];
   // guard f7 / f2 against the Scholar's Mate
   const weak = me === 'w' ? 'f2' : 'f7';
-  if (ply < 12 && chess.attackers(weak, them).length >= 2) return [phase, `Guard ${S(weak)}!`, `Two enemy pieces are aiming at ${S(weak)}, next to your king. Defend it, or you could be checkmated quickly.`];
+  if (ply < 12 && chess.attackers(weak, them).length >= 2) return [phase, `Guard ${S(weak)}!`, `Two enemy pieces are aiming at ${S(weak)}, next to your king. Defend it, or you could be checkmated quickly.`, [weak]];
   if (phase === 'Opening') {
     const line = hist.join(' ');
     const op = OPENINGS.find(o => (line + ' ').startsWith(o[0] + ' ') || line === o[0]);
@@ -570,10 +582,10 @@ function coachTip() {
     const kingHome = kingSquare(me) === 'e' + home;
     const queenOut = !pieces.some(p => p.color === me && p.type === 'q' && p.square === 'd' + home);
     const centre = pieces.some(p => p.color === me && p.type === 'p' && ['d4', 'e4', 'd5', 'e5'].includes(p.square));
-    if (!centre) return [phase, 'Take the centre', 'Pawns on e4 and d4 (or e5 and d5) control the middle of the board and give your pieces room.'];
-    if (queenOut && ply < 10) return [phase, 'Careful with the queen', 'Bringing her out early lets your opponent chase her around while they develop. Knights and bishops first.'];
-    if (knightsHome >= 1) return [phase, 'Knights before bishops', 'Bring your knights out towards the centre: c3 and f3 for White, c6 and f6 for Black.'];
-    if (kingHome && ply >= 8) return [phase, 'Castle soon', 'Castling tucks your king into the corner and brings a rook into the game. Clear the pieces between them first.'];
+    if (!centre) return [phase, 'Take the centre', 'Pawns on e4 and d4 (or e5 and d5) control the middle of the board and give your pieces room.', ['d4', 'e4', 'd5', 'e5']];
+    if (queenOut && ply < 10) return [phase, 'Careful with the queen', 'Bringing her out early lets your opponent chase her around while they develop. Knights and bishops first.', pieces.filter(p => p.color === me && p.type === 'q').map(p => p.square)];
+    if (knightsHome >= 1) return [phase, 'Knights before bishops', 'Bring your knights out towards the centre: c3 and f3 for White, c6 and f6 for Black.', me === 'w' ? ['c3', 'f3'] : ['c6', 'f6']];
+    if (kingHome && ply >= 8) return [phase, 'Castle soon', 'Castling tucks your king into the corner and brings a rook into the game. Clear the pieces between them first.', [kingSquare(me), me === 'w' ? 'g1' : 'g8']];
     return [phase, 'Opening rules', 'Control the centre, develop your knights and bishops, castle, then connect your rooks.'];
   }
   if (phase === 'Middlegame') {
@@ -597,10 +609,21 @@ function coachTip() {
   const t = tips[Math.floor(ply / 2) % tips.length];
   return [phase, t[0], t[1]];
 }
+let coachMemo = { key: '', tip: null };
+function coachTipCached() {
+  const k = chess.fen();
+  if (k !== coachMemo.key) coachMemo = { key: k, tip: coachTip() };
+  return coachMemo.tip;
+}
+const coachVisible = () => prefs.coach && G && !LESSON && !isOver() && !busy && !pending && !incoming && (passPlay || chess.turn() === mySide);
+function hintSquares() {
+  if (LESSON) return LESSON.hintOn && !LESSON.done ? LESSON.l.hintSq : [];
+  if (!coachVisible() || selected) return [];
+  return (coachTipCached()[3] || []).filter(Boolean);
+}
 function coachHTML() {
-  if (!prefs.coach || !G || isOver() || busy || pending || incoming) return '';
-  if (!passPlay && chess.turn() !== mySide) return '';
-  const [phase, title, text] = coachTip();
+  if (!coachVisible()) return '';
+  const [phase, title, text] = coachTipCached();
   return `<div class="coach"><span class="ph">${phase}</span><b>🦉 Professor Owl: ${esc(title)}</b>${esc(text)}</div>`;
 }
 
@@ -617,14 +640,14 @@ function renderPanels() {
   const over = isOver();
   $('#pTop').classList.toggle('turn', !over && chess.turn() === top);
   $('#pBot').classList.toggle('turn', !over && chess.turn() === bot);
-  $('#action').innerHTML = actionHTML() + coachHTML();
+  $('#action').innerHTML = LESSON ? lessonHTML() : actionHTML() + coachHTML();
   document.querySelector('[data-act=sound]').classList.toggle('off', !prefs.sound);
   document.querySelector('[data-act=voice]').classList.toggle('off', !prefs.voice);
   document.querySelector('[data-act=coach]').classList.toggle('off', !prefs.coach);
 }
 
 // ---------- playing ----------
-const canMove = () => G && !busy && !isOver() && !pending && !incoming && (passPlay || chess.turn() === mySide);
+const canMove = () => G && !(LESSON && LESSON.done) && !busy && !isOver() && !pending && !incoming && (passPlay || chess.turn() === mySide);
 
 async function handleTap(sq) {
   if (!canMove()) return;
@@ -635,7 +658,8 @@ async function handleTap(sq) {
       let promo = '';
       if (mv[0].promotion) { promo = await askPromotion(chess.turn()); if (!promo) return; }
       const from = selected; selected = null;
-      await doMove(from + sq + promo.toUpperCase(), false);
+      if (LESSON) await lessonMove(from + sq + promo);
+      else await doMove(from + sq + promo.toUpperCase(), false);
       return;
     }
   }
@@ -695,6 +719,85 @@ function askPromotion(color) {
   });
 }
 
+// ---------- Lessons with Professor Owl ----------
+const lessonsDone = () => store.get('wc:lessons', []);
+function showLessons() {
+  const done = lessonsDone();
+  let html = '', group = '';
+  LESSONS.forEach((l, i) => {
+    if (l.group !== group) { group = l.group; html += `<div class="lgroup">${esc(group)}</div>`; }
+    html += `<button class="lesson" data-lesson="${i}"><span>${esc(l.title)}</span><span class="tick">${done.includes(l.id) ? '✓' : ''}</span></button>`;
+  });
+  $('#lessonList').innerHTML = html;
+  $('#lessonsOv').classList.add('show');
+}
+$('#lessonList').addEventListener('click', e => { const b = e.target.closest('[data-lesson]'); if (b) startLesson(+b.dataset.lesson); });
+
+function startLesson(i) {
+  const l = LESSONS[i];
+  if (!l) return;
+  $('#lessonsOv').classList.remove('show'); $('#menu').classList.remove('show'); $('#setup').classList.remove('show');
+  $('#stale').classList.remove('show');
+  chess = new Chess(l.fen);
+  const me = chess.turn();
+  G = { id: 'lesson', lesson: true, r: null, invited: true };
+  G[me] = { n: prefs.name || 'You', h: HOUSES[prefs.house] ? prefs.house : 'R' };
+  G[other(me)] = { n: 'Professor Owl', h: 'R' };
+  mySide = me; orient = me; passPlay = false; pending = false; incoming = null; selected = null; lastMove = null; busy = false;
+  LESSON = { i, l, step: 0, msg: null, done: false, hintOn: false };
+  history.replaceState(null, '', location.pathname + '#lesson=' + l.id);
+  render();
+}
+function leaveLessons() { LESSON = null; G = null; history.pushState(null, '', location.pathname); showSetup(); }
+
+async function lessonMove(uci) {
+  const L = LESSON.l, before = chess.fen();
+  let mv;
+  try { mv = applyUci(uci); } catch (e) { return; }
+  busy = true; lastMove = mv; renderSquares();
+  await animate(mv);
+  busy = false;
+  const u = (mv.from + mv.to + (mv.promotion || '')).toLowerCase();
+  const ok = L.goal === 'mate' ? chess.isCheckmate()
+    : u === L.solution[LESSON.step] || (LESSON.step === 0 && (L.accept || []).includes(u));
+  if (!ok) {
+    LESSON.msg = ['Not quite', L.hint]; LESSON.hintOn = true;
+    render(); speak('Not quite. Try again.');
+    await sleep(1500);
+    chess = new Chess(before); lastMove = null; render();
+    return;
+  }
+  LESSON.step++;
+  if (L.goal !== 'mate' && LESSON.step < L.solution.length) {
+    LESSON.msg = ['Good!', L.mid || 'Now watch my reply...']; LESSON.hintOn = false;
+    render();
+    await sleep(900);
+    const rm = applyUci(L.solution[LESSON.step]);
+    busy = true; lastMove = rm; renderSquares();
+    await animate(rm);
+    busy = false; LESSON.step++;
+    render();
+    if (LESSON.step < L.solution.length) return;
+  }
+  LESSON.done = true; LESSON.hintOn = false;
+  LESSON.msg = ['Well done!', L.done];
+  const d = lessonsDone(); if (!d.includes(L.id)) { d.push(L.id); store.set('wc:lessons', d); }
+  sfx('chime'); speak('Well done!');
+  render();
+  if (chess.isCheckmate()) toppleKing();
+}
+
+function lessonHTML() {
+  const L = LESSON.l;
+  const [t, txt] = LESSON.msg || ['', L.intro];
+  const next = LESSON.i + 1 < LESSONS.length;
+  return `<div class="status">🎓 ${esc(L.title)}</div>
+    <div class="coach"><span class="ph">${LESSON.i + 1} of ${LESSONS.length}</span><b>🦉 Professor Owl${t ? ': ' + esc(t) : ''}</b>${esc(txt)}</div>
+    ${LESSON.done && next ? '<button class="btn pulse" data-act="lnext">Next lesson ➜</button>' : ''}
+    <div class="row">${LESSON.done ? '' : '<button class="btn ghost" data-act="lhint">💡 Hint</button>'}<button class="btn ghost" data-act="lretry">↺ Start again</button></div>
+    <div class="row"><button class="btn ghost" data-act="lessons">All lessons</button><button class="btn ghost" data-act="lexit">Leave</button></div>`;
+}
+
 // ---------- owl post ----------
 function showOwl(n) {
   const sender = n === 0 ? other(mySide) : (n % 2 === 1 ? 'w' : 'b');
@@ -750,9 +853,14 @@ document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]');
   if (b) unlockAudio();
   if (e.target.id === 'latest') { const r = getRec(G.id); if (r) location.href = r.url; return; }
-  if (!b) { if (e.target.id === 'menu' || e.target.id === 'log') closeAll(); return; }
+  if (!b) { if (e.target.id === 'menu' || e.target.id === 'log' || e.target.id === 'lessonsOv') { $('#lessonsOv').classList.remove('show'); if (G) closeAll(); } return; }
   switch (b.dataset.act) {
     case 'send': send(); break;
+    case 'lessons': closeAll(); showLessons(); break;
+    case 'lnext': if (LESSON) startLesson(LESSON.i + 1); break;
+    case 'lretry': if (LESSON) startLesson(LESSON.i); break;
+    case 'lhint': if (LESSON) { LESSON.hintOn = true; LESSON.msg = ['Hint', LESSON.l.hint]; render(); } break;
+    case 'lexit': leaveLessons(); break;
     case 'share': share(); break;
     case 'undo':
       if (!pending || busy) break;
@@ -778,7 +886,7 @@ document.addEventListener('click', async e => {
       closeAll(); sfx('gong'); saveRec(); render();
       if (DB && !passPlay && await dbPut()) pending = false, renderPanels();
       break;
-    case 'new': closeAll(); history.pushState(null, '', location.pathname); G = null; showSetup(); break;
+    case 'new': LESSON = null; closeAll(); history.pushState(null, '', location.pathname); G = null; showSetup(); break;
   }
 });
 function menuHouses() {
@@ -799,7 +907,7 @@ function menuLabels() {
   $('#resignBtn').textContent = 'Resign';
   $('#resignBtn').style.display = isOver() ? 'none' : '';
 }
-function closeAll() { for (const id of ['menu', 'log', 'promo']) $('#' + id).classList.remove('show'); if (G) $('#setup').classList.remove('show'); }
+function closeAll() { for (const id of ['menu', 'log', 'promo', 'lessonsOv']) $('#' + id).classList.remove('show'); if (G) $('#setup').classList.remove('show'); }
 function showMoves() {
   const h = chess.history();
   let out = '';
@@ -962,6 +1070,7 @@ async function dbGet(id) {
   try { const r = await fetch(dbUrl(id), { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch (e) { return null; }
 }
 async function dbPut() {
+  if (G && G.lesson) return true;
   try {
     const r = await fetch(dbUrl(G.id), { method: 'PUT', body: JSON.stringify({ w: G.w, b: G.b, m: uciList().join(''), r: G.r || '', t: Date.now() }) });
     return r.ok;
@@ -972,7 +1081,7 @@ const samePrefix = (a, b) => { for (let i = 0; i < Math.min(a.length, b.length);
 
 function watch() {
   if (es) { es.close(); es = null; }
-  if (!DB || !G || passPlay || !window.EventSource) return;
+  if (!DB || !G || passPlay || G.lesson || !window.EventSource) return;
   es = new EventSource(dbUrl(G.id));
   es.addEventListener('put', e => {
     try {
@@ -988,7 +1097,7 @@ setInterval(() => { if (DB && G && !passPlay && !document.hidden && !busy) refre
 addEventListener('pageshow', () => refresh());
 addEventListener('focus', () => refresh());
 async function refresh() {
-  if (!DB || !G || passPlay) return;
+  if (!DB || !G || passPlay || G.lesson) return;
   const d = await dbGet(G.id);
   if (d) onRemote(d);
 }
@@ -1016,6 +1125,9 @@ async function onRemote(d) {
 }
 
 async function boot() {
+  const lp = new URLSearchParams(location.hash.slice(1)).get('lesson');
+  if (lp) { const i = LESSONS.findIndex(l => l.id === lp); if (i >= 0) { if (es) { es.close(); es = null; } startLesson(i); return; } }
+  LESSON = null;
   const g = parseHash();
   if (DB && g) {
     const d = await dbGet(g.id);

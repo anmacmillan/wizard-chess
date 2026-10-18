@@ -462,9 +462,10 @@ export class Board3D {
     this.applyLift();
   }
 
-  setHighlights({ last = [], selected = null, targets = [], check = null } = {}) {
+  setHighlights({ last = [], selected = null, targets = [], check = null, hints = [] } = {}) {
     for (const ov of this.overlay.values()) ov.material.opacity = 0;
     const paint = (sq, color, op) => { const ov = this.overlay.get(sq); if (ov) { ov.material.color.setHex(color); ov.material.opacity = op; } };
+    for (const sq of hints) paint(sq, 0xb47cff, 0.5);   // Professor Owl's squares
     for (const sq of last) paint(sq, 0xe6b43c, 0.34);
     if (selected) paint(selected, 0x6fc6ff, 0.45);
     if (check) paint(check, 0xff2a1a, 0.6);
