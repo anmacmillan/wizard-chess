@@ -648,13 +648,119 @@ function coachTipCached() {
 const coachVisible = () => prefs.coach && G && !LESSON && !isOver() && !busy && !pending && !incoming && (passPlay || chess.turn() === mySide);
 function hintSquares() {
   if (LESSON) return LESSON.hintOn && !LESSON.done ? LESSON.l.hintSq : [];
+  const sg = sugNow();
+  if (sg && sg.from && sugVisible()) return [sg.from, sg.to];
   if (!coachVisible() || selected) return [];
   return (coachTipCached()[3] || []).filter(Boolean);
 }
 function coachHTML() {
-  if (!coachVisible()) return '';
+  if (!coachVisible() || sugNow()) return '';
   const [phase, title, text] = coachTipCached();
   return `<div class="coach" data-act="owlsay" style="cursor:pointer"><span class="ph">${phase} 🔊</span><b>🦉 Professor Owl: ${esc(title)}</b>${esc(text)}</div>`;
+}
+
+// ---------- 💡 suggest a move: Stockfish (engine/, a Web Worker) finds it, Professor Owl explains it ----------
+let sfReady = null, SUG = null;            // SUG: { fen, thinking } | { fen, fail } | { fen, from, to, title, text, key }
+function engine() {
+  if (sfReady) return sfReady;
+  sfReady = new Promise((res, rej) => {
+    let w; try { w = new Worker('engine/stockfish.js'); } catch (e) { rej(e); return; }
+    w.onmessage = e => { if (String(e.data).trim() === 'uciok') res(w); };
+    w.onerror = rej;
+    w.postMessage('uci');
+    setTimeout(() => rej(new Error('engine did not start')), 20000);
+  });
+  sfReady.catch(() => { sfReady = null; });
+  return sfReady;
+}
+async function bestMove(fen, ms = 1500) {
+  const w = await engine();
+  return new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error('no move')), ms + 10000);
+    w.onmessage = e => { const m = /^bestmove (\S+)/.exec(String(e.data)); if (m) { clearTimeout(t); res(m[1]); } };
+    w.postMessage('ucinewgame'); w.postMessage('position fen ' + fen); w.postMessage('go movetime ' + ms);
+  });
+}
+// a piece is in danger if the other side attacks it and it is unguarded, or a cheaper piece attacks it
+function inDanger(sq) {
+  const p = chess.get(sq); if (!p || p.type === 'k') return false;
+  const o = other(p.color);
+  if (!chess.isAttacked(sq, o)) return false;
+  return !chess.isAttacked(sq, p.color) || chess.attackers(sq, o).some(a => VALUE[chess.get(a).type] < VALUE[p.type]);
+}
+const SG = {
+  mate: 'Checkmate! This move wins the game.',
+  promo: 'Your pawn reaches the far side and becomes a queen!',
+  check: 'Check! The enemy king has to run, hide, or be rescued.',
+  castle: 'Castle! Your king hides safely in the corner, and a rook joins the game.',
+  trade: 'A fair swap: you take one of theirs, even if they take one back.',
+  dev: 'This brings a new piece into the game. Get them all out early!',
+  centre: 'A pawn in the centre gives your pieces room to move.',
+  quiet: 'A quiet move that makes your position stronger. Can you work out why?',
+};
+const nmL = t => NAMES[t].toLowerCase();
+for (const p of 'pnbrqk') SG[`fork-${p}`] = `A fork! Your ${nmL(p)} attacks two pieces at once, and they can only save one.`;
+for (const p of 'pnbrq') {
+  SG[`free-${p}`] = `Take the ${nmL(p)}! Nobody is guarding it, so it's free.`;
+  SG[`win-${p}`] = `Take the ${nmL(p)}! It's worth more than the piece you take it with.`;
+  SG[`save-${p}`] = `Your ${nmL(p)} was in danger. This moves it somewhere safe.`;
+  SG[`guard-${p}`] = `Your ${nmL(p)} was in danger. This move protects it.`;
+  SG[`attack-${p}`] = `This attacks their ${nmL(p)}. Now they have to deal with that!`;
+}
+function explainMove(uci) {
+  const me = chess.turn(), them = other(me);
+  const before = chess.board().flat().filter(p => p && p.color === me && p.type !== 'k' && inDanger(p.square)).map(p => p.square);
+  const m = chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || 'q' });
+  if (!m) return null;
+  const t = m.promotion || m.piece;
+  const safe = !inDanger(m.to);
+  const mate = chess.isCheckmate(), check = chess.inCheck();
+  const hit = chess.board().flat().filter(p => p && p.color === them && (p.type === 'k' || VALUE[p.type] >= 3) && chess.attackers(p.square, me).includes(m.to));
+  const stillDanger = before.filter(sq => sq !== m.from && chess.get(sq) && chess.get(sq).color === me && inDanger(sq));
+  const guarded = before.filter(sq => sq !== m.from && !stillDanger.includes(sq));
+  const lone = hit.filter(p => p.type !== 'k' && VALUE[p.type] > VALUE[t] || p.type !== 'k' && !chess.isAttacked(p.square, them));
+  chess.undo();
+  const ply = chess.history().length, home = me === 'w' ? '1' : '8';
+  let key;
+  if (mate) key = 'mate';
+  else if (m.promotion) key = 'promo';
+  else if (safe && hit.length >= 2) key = `fork-${m.piece}`;
+  else if (m.captured && safe) key = `free-${m.captured}`;
+  else if (m.captured && VALUE[m.captured] > VALUE[m.piece]) key = `win-${m.captured}`;
+  else if (/[kq]/.test(m.flags)) key = 'castle';
+  else if (before.includes(m.from) && safe) key = `save-${m.piece}`;
+  else if (guarded.length) key = `guard-${chess.get(guarded[0]).type}`;
+  else if (m.captured) key = 'trade';
+  else if (check) key = 'check';
+  else if (safe && lone.length) key = `attack-${lone[0].type}`;
+  else if (ply < 20 && 'nb'.includes(m.piece) && m.from[1] === home) key = 'dev';
+  else if (m.piece === 'p' && ['d4', 'e4', 'd5', 'e5', 'c4', 'c5'].includes(m.to)) key = 'centre';
+  else key = 'quiet';
+  const move = /[kq]/.test(m.flags) ? 'Castle' : `${NAMES[m.piece]} to ${m.to.toUpperCase()}`;
+  return { title: `Try: ${move}`, text: SG[key], key: 'o-sg-' + key };
+}
+const sugVisible = () => G && !LESSON && !isOver() && !busy && !pending && !incoming && (passPlay || chess.turn() === mySide);
+const sugNow = () => SUG && G && SUG.fen === chess.fen() ? SUG : null;
+async function suggest() {
+  const fen = chess.fen();
+  if (sugNow() && !sugNow().fail) return;
+  SUG = { fen, thinking: true }; selected = null; render();
+  sfx('owl');
+  let uci = null;
+  try { uci = await bestMove(fen); } catch (e) { console.warn('[suggest]', e); }
+  if (!G || chess.fen() !== fen) return;    // a move was made while the owl was thinking
+  const ex = uci && uci !== '(none)' ? explainMove(uci) : null;
+  SUG = ex ? { fen, from: uci.slice(0, 2), to: uci.slice(2, 4), ...ex } : { fen, fail: true };
+  render();
+  if (ex) voice([ex.key], ex.text);
+}
+function sugHTML() {
+  if (!sugVisible()) return '';
+  const s = sugNow();
+  if (!s) return `<button class="btn ghost" data-act="suggest">💡 Suggest a move</button>`;
+  if (s.thinking) return `<div class="coach"><b>🦉 Professor Owl is thinking…</b>Hmm, let me look at the whole board.</div>`;
+  if (s.fail) return `<div class="coach"><b>🦉 Professor Owl is puzzled</b>I couldn't work it out just now.</div><button class="btn ghost" data-act="suggest">💡 Try again</button>`;
+  return `<div class="coach" data-act="sugsay" style="cursor:pointer"><span class="ph">🔊</span><b>💡 ${esc(s.title)}</b>${esc(s.text)}</div>`;
 }
 
 function render() {
@@ -670,7 +776,7 @@ function renderPanels() {
   const over = isOver();
   $('#pTop').classList.toggle('turn', !over && chess.turn() === top);
   $('#pBot').classList.toggle('turn', !over && chess.turn() === bot);
-  $('#action').innerHTML = LESSON ? lessonHTML() : actionHTML() + coachHTML();
+  $('#action').innerHTML = LESSON ? lessonHTML() : actionHTML() + sugHTML() + coachHTML();
   document.querySelector('[data-act=sound]').classList.toggle('off', !prefs.sound);
   document.querySelector('[data-act=voice]').classList.toggle('off', !prefs.voice);
   document.querySelector('[data-act=coach]').classList.toggle('off', !prefs.coach);
@@ -903,6 +1009,8 @@ document.addEventListener('click', async e => {
     case 'send': send(); break;
     case 'owlsay': { unlockAudio(true); const t = coachTipCached(); voice(t[4] ? [t[4]] : [], `${t[1]}. ${t[2]}`); break; }
     case 'lessons': closeAll(); showLessons(); break;
+    case 'suggest': unlockAudio(true); suggest(); break;
+    case 'sugsay': { unlockAudio(true); const g = sugNow(); if (g && g.key) voice([g.key], g.text); break; }
     case 'lnext': if (LESSON) startLesson(LESSON.i + 1); break;
     case 'lretry': if (LESSON) startLesson(LESSON.i); break;
     case 'lhint': if (LESSON) { LESSON.hintOn = true; LESSON.msg = ['Hint', LESSON.l.hint]; render(); voice([`o-les-${LESSON.l.id}-hint`], LESSON.l.hint); } break;
@@ -1170,6 +1278,7 @@ window.__wcLines = () => {
     "Rooks belong behind passed pawns, yours or your opponent's.",
     'The opposition: with only kings and pawns, standing your king face to face with theirs can win the race.'];
   end.forEach((t, i) => { L[`o-tip-end-${i}`] = t; });
+  for (const [k, t] of Object.entries(SG)) L['o-sg-' + k] = t;
   L['o-les-wrong'] = 'Not quite. Have another look.';
   for (const l of LESSONS) {
     L[`o-les-${l.id}-intro`] = l.intro; L[`o-les-${l.id}-hint`] = l.hint; L[`o-les-${l.id}-done`] = l.done;
@@ -1282,7 +1391,7 @@ async function boot() {
 
 layout();
 boot();
-window.__wc = { tap: sq => handleTap(sq), get chess() { return chess; }, get state() { return { mySide, orient, pending, passPlay, incoming, busy }; } };
+window.__wc = { tap: sq => handleTap(sq), get sug() { return SUG; }, explain: u => explainMove(u), get chess() { return chess; }, get state() { return { mySide, orient, pending, passPlay, incoming, busy }; } };
 </script>
 </body>
 </html>
