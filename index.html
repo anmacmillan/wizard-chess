@@ -926,7 +926,7 @@ async function animate(mv) {
   else if (chess.inCheck()) sfx('check');
 }
 
-function toppleKing() { board3d.topple(kingSquare(chess.turn())); }
+function toppleKing() { const k = kingSquare(chess.turn()); board3d.topple(k); board3d.celebrate(other(chess.turn()), k); }
 
 function askPromotion(color) {
   return new Promise(resolve => {
@@ -1288,7 +1288,7 @@ async function voice(keys, text) {
   for (const b of bufs) { const s = AC.createBufferSource(), g = AC.createGain(); g.gain.value = 1; s.buffer = b; s.connect(g).connect(AC.destination); s.start(t); t += b.duration + 0.06; }
 }
 const SFX_CLIP = { piece: a => 'move-' + a, strike: () => 'slash', crash: () => 'shatter', check: () => 'check', gong: () => 'checkmate',
-  chime: () => 'promote', battlecry: () => 'battlecry', castle: () => 'castle', owl: () => 'owl', start: () => 'start' };
+  chime: () => 'promote', battlecry: () => 'battlecry', fireball: () => 'fireball', arrow: () => 'arrow', beam: () => 'beam', firework: () => 'firework', castle: () => 'castle', owl: () => 'owl', start: () => 'start' };
 const SFX_VOL = { 'move-p': 0.5, 'move-b': 0.6, 'move-n': 0.7, checkmate: 0.9, battlecry: 0.7, owl: 0.6 };
 
 function sfx(name, arg) {

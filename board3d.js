@@ -428,6 +428,7 @@ function buildPiece(type, color) {
 
 // ---------- the board ----------
 // hat fit on the head bone: [height, forward, scale]
+const SPELL = { k: { kind: 'fire', anim: 'Spell1', sfx: 'fireball', at: 0.45 }, q: { kind: 'arrow', anim: 'Bow_Shoot', sfx: 'arrow', at: 0.5 }, b: { kind: 'beam', anim: 'Spell1', sfx: 'beam', at: 0.45 } };
 const HAT_FIT = { crown: [0.6, 0.0, 0.92], tiara: [0.66, 0.0, 0.9], mitre: [0.55, 0.0, 0.68] };
 // rider's legs: bone -> extra rotation (x, y, z) to sit in the saddle
 const SEAT = { UpperLegL: [-1.45, 0, -0.45], UpperLegR: [-1.45, 0, 0.45], LowerLegL: [1.55, 0, 0], LowerLegR: [1.55, 0, 0] };
@@ -764,7 +765,7 @@ export class Board3D {
     this.tintHero(model, color);
     if (cfg.hat) {      // worn on the head bone, so it moves with every animation
       const head = model.getObjectByName('Head');
-      if (head) { const hat = makeHat(cfg.hat, color); const [y, z, s] = HAT_FIT[cfg.hat]; hat.position.set(0, y, z); hat.scale.setScalar(s); head.add(hat); }
+      if (head) { const hat = makeHat(cfg.hat, color); hat.userData.hat = cfg.hat; const [y, z, s] = HAT_FIT[cfg.hat]; hat.position.set(0, y, z); hat.scale.setScalar(s); head.add(hat); }
     }
     model.rotation.y = color === 'w' ? Math.PI : 0;     // face the other side
     group.add(model);
@@ -858,7 +859,7 @@ export class Board3D {
   }
 
   tween(ms, fn) {
-    return new Promise(resolve => this.tweens.push({ t0: performance.now(), ms, fn, resolve }));
+    return new Promise(resolve => this.tweens.push({ t0: performance.now(), ms: ms * (this.slowmo || 1), fn, resolve }));   // slowmo: for testing
   }
   glide(g, from, to, ms, hop) {
     const f = from.clone(), t = to.clone();
@@ -962,15 +963,25 @@ export class Board3D {
     }
     this.hooks.sfx && this.hooks.sfx(mv.isKingsideCastle() || mv.isQueensideCastle() ? 'castle' : 'piece', mv.piece);
     if (victim) {
-      // the fight: walk up, attack, the victim is hit and falls, then crumbles to rubble
+      // the fight: walk up, attack, the victim is hit and falls, then crumbles to rubble.
+      // The king, queen and bishop cast from where they stand: fireball, magic arrow, beam of light.
       const vp = victim.position.clone();
       const dir = vp.clone().sub(a).setY(0).normalize();
-      const stop = vp.clone().addScaledVector(dir, -0.72);
+      const spell = SPELL[mv.piece];
+      const stop = spell ? a.clone() : vp.clone().addScaledVector(dir, -0.72);
       await walk(a, stop, mv.piece === 'n');
       this.face(g, dir); this.face(victim, dir.clone().negate());
-      this.hooks.sfx && this.hooks.sfx('battlecry');
-      const atk = this.play(g, H.cfg.attack, { once: true, fade: 0.12 });
-      await new Promise(r => setTimeout(r, atk * 520));
+      if (spell) {
+        await new Promise(r => setTimeout(r, 240));
+        const atk = this.play(g, spell.anim, { once: true, fade: 0.12 });
+        this.hooks.sfx && this.hooks.sfx(spell.sfx);
+        await new Promise(r => setTimeout(r, atk * spell.at * 1000));
+        await this.cast(spell.kind, stop.clone().setY(H.cfg.h * 0.62).addScaledVector(dir, 0.18), vp.clone().setY(0.5));
+      } else {
+        this.hooks.sfx && this.hooks.sfx('battlecry');
+        const atk = this.play(g, H.cfg.attack, { once: true, fade: 0.12 });
+        await new Promise(r => setTimeout(r, atk * 520));
+      }
       this.hooks.sfx && this.hooks.sfx('strike');
       this.play(victim, 'RecieveHit', { once: true, fade: 0.08 });
       await new Promise(r => setTimeout(r, 380));
@@ -998,6 +1009,123 @@ export class Board3D {
     } else {
       this.face(g, null); this.play(g, 'Idle');
     }
+  }
+
+  // a spell flying from one point to another; resolves when it hits
+  async cast(kind, from, to) {
+    const add = (geo, color, op = 1) => { const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false })); this.scene.add(m); return m; };
+    const kill = (...ms) => ms.forEach(m => { this.scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
+    const color = { fire: 0xff7a1a, arrow: 0x7fe9ff, beam: 0xffc23a }[kind];
+    const light = new THREE.PointLight(color, 9, 3.5, 2); this.scene.add(light);
+    const sparks = [];
+    const spark = (p, c, size) => { const m = add(sphereGeo(size), c, 0.9); m.position.copy(p); sparks.push({ m, v: new THREE.Vector3(rnd(-0.6, 0.6), rnd(-0.2, 0.8), rnd(-0.6, 0.6)), life: 1 }); };
+    const tickSparks = dt => { for (const s of sparks) { s.life -= dt * 2.2; s.m.position.addScaledVector(s.v, dt); s.m.material.opacity = Math.max(0, s.life); s.m.scale.setScalar(Math.max(0.05, s.life)); } };
+    const dist = from.distanceTo(to), dirv = to.clone().sub(from).normalize();
+    let last = performance.now();
+    if (kind === 'beam') {
+      // a pillar of light from the staff, widening then fading
+      const beam = add(new THREE.CylinderGeometry(1, 1, 1, 16, 1, true), 0xffc23a, 0.85);
+      const core = add(new THREE.CylinderGeometry(1, 1, 1, 12, 1, true), 0xffffff, 0.95);
+      const mid = from.clone().add(to).multiplyScalar(0.5);
+      for (const b of [beam, core]) { b.position.copy(mid); b.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dirv); }
+      light.position.copy(to);
+      await this.tween(650, p => {
+        const now = performance.now(), dt = (now - last) / 1000; last = now;
+        const w = Math.sin(Math.PI * Math.min(1, p * 1.3)) * 0.09;
+        beam.scale.set(w + 0.001, dist * Math.min(1, p * 3), w + 0.001); core.scale.set(w * 0.35 + 0.001, dist * Math.min(1, p * 3), w * 0.35 + 0.001);
+        beam.material.opacity = 0.8 * (1 - p * 0.6);
+        if (p > 0.3 && Math.random() < 0.6) spark(to.clone().add(new THREE.Vector3(rnd(-0.15, 0.15), rnd(-0.2, 0.3), rnd(-0.15, 0.15))), 0xfff8d0, 0.025);
+        tickSparks(dt);
+      });
+      kill(beam, core);
+    } else {
+      // fireball or glowing arrow, flying in a little arc with a trail
+      const ball = kind === 'fire' ? add(sphereGeo(0.09), 0xffd080) : add(new THREE.CylinderGeometry(0.012, 0.012, 0.34, 6).rotateX(Math.PI / 2), 0xd8fbff);
+      const glow = add(sphereGeo(kind === 'fire' ? 0.17 : 0.07), color, 0.55);
+      const tip = kind === 'arrow' ? add(new THREE.ConeGeometry(0.035, 0.09, 8).rotateX(Math.PI / 2).translate(0, 0, 0.2), 0xffffff) : null;
+      await this.tween(Math.max(320, dist * 260), p => {
+        const now = performance.now(), dt = (now - last) / 1000; last = now;
+        const pos = from.clone().lerp(to, p); pos.y += Math.sin(Math.PI * p) * (kind === 'fire' ? 0.35 : 0.12);
+        for (const m of [ball, glow, tip]) if (m) { m.position.copy(pos); m.lookAt(to); }
+        glow.scale.setScalar(1 + Math.sin(now / 40) * 0.15);
+        light.position.copy(pos);
+        spark(pos, kind === 'fire' ? (Math.random() < 0.5 ? 0xff5a10 : 0xffc040) : 0x9ff4ff, kind === 'fire' ? 0.05 : 0.025);
+        tickSparks(dt);
+      });
+      kill(ball, glow); if (tip) kill(tip);
+    }
+    // the burst on impact
+    for (let i = 0; i < 18; i++) { spark(to, color, 0.04); sparks[sparks.length - 1].v.multiplyScalar(3); }
+    this.flash(to, color, 90);
+    last = performance.now();
+    this.tween(500, () => { const now = performance.now(); tickSparks((now - last) / 1000); last = now; }).then(() => { sparks.forEach(s => kill(s.m)); this.scene.remove(light); });
+    this.tween(300, p => { light.intensity = 9 * (1 - p); });
+  }
+
+  // checkmate: the loser's crown flies off and rolls away, the winners leap about, confetti and fireworks
+  celebrate(winner, loserKingSq) {
+    const g = this.pieces.get(loserKingSq), H = this.heroOf(g);
+    if (H) {
+      let crown = null;
+      H.model.traverse(o => { if (o.userData.hat === 'crown') crown = o; });
+      if (crown) setTimeout(() => {
+        const wp = new THREE.Vector3(), wq = new THREE.Quaternion(), ws = new THREE.Vector3();
+        crown.updateWorldMatrix(true, false); crown.matrixWorld.decompose(wp, wq, ws);
+        this.scene.attach(crown);
+        const away = new THREE.Vector3(rnd(-1, 1), 0, rnd(-1, 1)).normalize();
+        const land = wp.clone().addScaledVector(away, 0.9).setY(0.05);
+        const rollTo = land.clone().addScaledVector(away, 1.1);
+        const spin = new THREE.Vector3(away.z, 0, -away.x);
+        this.tween(700, p => { crown.position.lerpVectors(wp, land, p); crown.position.y = THREE.MathUtils.lerp(wp.y, 0.05, p) + Math.sin(Math.PI * p) * 0.7; crown.rotateOnWorldAxis(spin, 0.18); })
+          .then(() => { this.hooks.sfx && this.hooks.sfx('thud'); crown.quaternion.setFromAxisAngle(spin, Math.PI / 2); return this.tween(1400, p => { crown.position.lerpVectors(land, rollTo, easeOut(p)); crown.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), 0.06 * (1 - p)); }); })
+          .then(() => setTimeout(() => this.scene.remove(crown), 6000));
+      }, 1100);
+    }
+    // the winning side leaps for joy
+    setTimeout(() => {
+      for (const p of this.pieces.values()) {
+        if (p.userData.color !== winner) continue;
+        const delay = rnd(0, 600), hops = 3 + Math.floor(rnd(0, 3));
+        setTimeout(() => {
+          const W = this.heroOf(p);
+          if (W) this.play(p, W.cfg.attack, { once: false, fade: 0.2, speed: 1.2 });
+          this.tween(hops * 520, q => { p.position.y = Math.abs(Math.sin(q * hops * Math.PI)) * 0.32; })
+            .then(() => { p.position.y = 0; if (W) this.play(p, 'Idle'); });
+        }, delay);
+      }
+    }, 900);
+    // confetti and fireworks
+    const conf = [], cols = [0xff4d6d, 0xffd166, 0x06d6a0, 0x4cc9f0, 0xb388ff, 0xffffff];
+    const pg = new THREE.PlaneGeometry(0.11, 0.06);
+    for (let i = 0; i < 320; i++) {
+      const m = new THREE.Mesh(pg, new THREE.MeshBasicMaterial({ color: cols[i % cols.length], side: THREE.DoubleSide, transparent: true, fog: false }));
+      m.position.set(rnd(-4.2, 4.2), rnd(2.5, 7.5), rnd(-4.2, 4.2)); m.rotation.set(rnd(0, 6), rnd(0, 6), rnd(0, 6));
+      this.scene.add(m); conf.push({ m, v: rnd(0.9, 1.6), w: new THREE.Vector3(rnd(-6, 6), rnd(-6, 6), rnd(-6, 6)), s: rnd(0, 6) });
+    }
+    let last = performance.now();
+    this.tween(6500, p => {
+      const now = performance.now(), dt = (now - last) / 1000; last = now;
+      for (const c of conf) {
+        c.m.position.y = Math.max(0.01, c.m.position.y - c.v * dt); c.m.position.x += Math.sin(now / 400 + c.s) * dt * 0.3;
+        if (c.m.position.y > 0.02) { c.m.rotation.x += c.w.x * dt; c.m.rotation.y += c.w.y * dt; } else c.m.rotation.set(-Math.PI / 2, 0, c.s);
+        if (p > 0.8) c.m.material.opacity = (1 - p) * 5;
+      }
+    }).then(() => conf.forEach(c => { this.scene.remove(c.m); c.m.material.dispose(); }));
+    for (let k = 0; k < 6; k++) setTimeout(() => this.firework(new THREE.Vector3(rnd(-3.5, 3.5), rnd(3.2, 4.6), rnd(-3, 1))), 700 + k * 650);
+  }
+  firework(at) {
+    this.hooks.sfx && this.hooks.sfx('firework');
+    const col = new THREE.Color().setHSL(Math.random(), 0.9, 0.62), n = 70;
+    const pos = new Float32Array(n * 3), vel = [];
+    for (let i = 0; i < n; i++) { const v = new THREE.Vector3(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).normalize().multiplyScalar(rnd(1.6, 2.4)); vel.push(v); pos.set([at.x, at.y, at.z], i * 3); }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: col, size: 0.16, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    this.scene.add(pts);
+    const light = new THREE.PointLight(col, 40, 12, 2); light.position.copy(at); this.scene.add(light);
+    this.tween(1500, p => {
+      for (let i = 0; i < n; i++) { const e = easeOut(p); pos[i * 3] = at.x + vel[i].x * e; pos[i * 3 + 1] = at.y + vel[i].y * e - p * p * 1.2; pos[i * 3 + 2] = at.z + vel[i].z * e; }
+      geo.attributes.position.needsUpdate = true; pts.material.opacity = 1 - p; light.intensity = 40 * (1 - p) * (1 - p);
+    }).then(() => { this.scene.remove(pts, light); geo.dispose(); pts.material.dispose(); });
   }
 
   flash(pos, color, power) {

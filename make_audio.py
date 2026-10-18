@@ -34,6 +34,10 @@ SFX = {
     'promote': ('an angelic choir singing a magical transformation chord with sparkles', 2.6),
     'start': ('a short roll of medieval war drums ending in a boom', 2.2),
     'owl': ('an owl hooting softly twice in a quiet night', 1.6),
+    'fireball': ('a wizard casting a fireball: a magical whoosh of roaring fire flying through the air', 1.6),
+    'arrow': ('a bow string twang and a magic arrow whistling through the air with a shimmering sparkle', 1.2),
+    'beam': ('a holy beam of light: an angelic shimmering hum rising to a bright magical zap', 1.6),
+    'firework': ('a single firework rocket bursting with a bang and crackling sparkles', 2.0),
 }
 
 
