@@ -25,6 +25,92 @@ const HORSE = { w: 'HorseWhite', b: 'Horse', scale: 0.168, saddle: [0, 3.25, -0.
 const HORSE_MAP = { Idle: 'Idle', Walk: 'Walk', Run: 'Gallop', Roll: 'Gallop_Jump', Sword_Attack: 'Attack_Headbutt', RecieveHit: 'Idle_HitReact_Left', Death: 'Death' };
 const RIDER_MAP = { Walk: 'Idle', Run: 'Idle', Roll: 'Idle' };
 
+// ---------- the rook: a war elephant carrying a battle tower (built here, animated by hand) ----------
+// Old Indian chess sets often showed the rook this way. Facing +z, sized to stand on one square.
+const ELE_M = {
+  w: new THREE.MeshStandardMaterial({ color: 0xc9c2b8, roughness: 0.85 }),
+  b: new THREE.MeshStandardMaterial({ color: 0x45404c, roughness: 0.8 }),
+  ivory: new THREE.MeshStandardMaterial({ color: 0xfff6e0, roughness: 0.4 }),
+  eye: new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2 }),
+  clothW: new THREE.MeshStandardMaterial({ color: 0xb3122a, roughness: 0.6 }),
+  clothB: new THREE.MeshStandardMaterial({ color: 0x5b1f86, roughness: 0.6 }),
+};
+class ElephantRig {
+  constructor(color) {
+    const skin = ELE_M[color], g = this.root = new THREE.Group();
+    const part = (geo, mat, x, y, z, parent = g) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; };
+    this.body = new THREE.Group(); g.add(this.body);
+    const torso = part(new THREE.SphereGeometry(0.27, 24, 16), skin, 0, 0.52, 0, this.body); torso.scale.set(1, 0.85, 1.22);
+    // the blanket and the tower
+    const cloth = color === 'w' ? ELE_M.clothW : ELE_M.clothB;
+    part(new THREE.BoxGeometry(0.44, 0.03, 0.4), cloth, 0, 0.735, -0.02, this.body);                  // the blanket over the back
+    for (const x of [-0.262, 0.262]) {                                                                // and down each side
+      const panel = part(new THREE.BoxGeometry(0.014, 0.2, 0.38), cloth, x, 0.6, -0.02, this.body); panel.rotation.z = Math.sign(x) * 0.2;
+      const trim = part(new THREE.BoxGeometry(0.018, 0.028, 0.39), HAT_M.gold, x * 1.07, 0.505, -0.02, this.body); trim.rotation.z = panel.rotation.z;
+    }
+    const stone = color === 'w' ? M.white : M.black;
+    part(new THREE.BoxGeometry(0.34, 0.2, 0.34), stone, 0, 0.84, -0.02, this.body);
+    part(new THREE.BoxGeometry(0.37, 0.025, 0.37), HAT_M.gold, 0, 0.75, -0.02, this.body);
+    part(new THREE.BoxGeometry(0.37, 0.025, 0.37), HAT_M.gold, 0, 0.94, -0.02, this.body);
+    for (let i = 0; i < 4; i++) for (const side of [0, 1, 2, 3]) {      // battlements
+      const t = -0.13 + i * 0.087, x = side < 2 ? t : (side === 2 ? -0.16 : 0.16), z = side < 2 ? (side ? 0.14 : -0.18) : t - 0.02;
+      part(new THREE.BoxGeometry(0.055, 0.06, 0.055), stone, x, 0.98, z, this.body);
+    }
+    // head, ears, tusks, trunk
+    this.head = new THREE.Group(); this.head.position.set(0, 0.6, 0.3); this.body.add(this.head);
+    part(new THREE.SphereGeometry(0.17, 20, 14), skin, 0, 0, 0.06, this.head);
+    for (const sx of [-1, 1]) part(new THREE.SphereGeometry(0.035, 10, 8), ELE_M.eye, sx * 0.1, 0.04, 0.18, this.head).scale.set(1, 1.2, 0.6);
+    this.ears = [-1, 1].map(sx => {
+      const pivot = new THREE.Group(); pivot.position.set(sx * 0.13, 0.02, 0.0); this.head.add(pivot);
+      const ear = part(new THREE.SphereGeometry(0.16, 16, 12), skin, sx * 0.08, -0.03, -0.02, pivot); ear.scale.set(0.95, 1.1, 0.18); ear.rotation.y = sx * 0.5;
+      pivot.userData.sx = sx; return pivot;
+    });
+    for (const sx of [-1, 1]) { const t = part(new THREE.ConeGeometry(0.026, 0.17, 10), ELE_M.ivory, sx * 0.075, -0.1, 0.2, this.head); t.rotation.x = 1.1; }
+    this.trunk = []; let parent = this.head, r = 0.06;
+    const first = new THREE.Group(); first.position.set(0, -0.04, 0.2); this.head.add(first); parent = first;
+    for (let i = 0; i < 6; i++) {
+      const seg = i === 0 ? first : new THREE.Group();
+      if (i) { seg.position.y = -0.065; parent.add(seg); }
+      part(new THREE.CylinderGeometry(r, r * 0.9, 0.075, 12), skin, 0, -0.03, 0, seg);
+      this.trunk.push(seg); parent = seg; r *= 0.86;
+    }
+    // legs swing from the hips
+    this.legs = [[-0.14, 0.17], [0.14, 0.17], [-0.14, -0.17], [0.14, -0.17]].map(([x, z], i) => {
+      const hip = new THREE.Group(); hip.position.set(x, 0.42, z); g.add(hip);
+      part(new THREE.CylinderGeometry(0.075, 0.08, 0.3, 14), skin, 0, -0.15, 0, hip);
+      part(new THREE.CylinderGeometry(0.085, 0.085, 0.03, 14), ELE_M.ivory, 0, -0.29, 0, hip);
+      hip.userData.phase = i === 0 || i === 3 ? 0 : Math.PI; return hip;
+    });
+    const tail = part(new THREE.CylinderGeometry(0.012, 0.008, 0.2, 6), skin, 0, 0.46, -0.33, this.body); tail.rotation.x = -0.3;
+    this.state = 'Idle'; this.t = Math.random() * 10; this.st = 0; this.fall = 0;
+  }
+  play(name) {
+    const map = { Walk: 'Walk', Run: 'Run', Roll: 'Run', Attack: 'Attack', RecieveHit: 'Hit', Death: 'Death' };
+    this.state = map[name] || 'Idle'; this.st = 0;
+    return { Attack: 1.1, Hit: 0.5, Death: 1.3 }[this.state] || 1;
+  }
+  update(dt) {
+    this.t += dt; this.st += dt;
+    const s = this.state, t = this.t, moving = s === 'Walk' || s === 'Run';
+    const sp = s === 'Run' ? 11 : 7;
+    for (const leg of this.legs) leg.rotation.x = moving ? Math.sin(t * sp + leg.userData.phase) * 0.45 : 0;
+    this.body.position.y = moving ? Math.abs(Math.sin(t * sp)) * 0.025 : Math.sin(t * 1.6) * 0.006;
+    for (const e of this.ears) e.rotation.y = e.userData.sx * (0.15 + Math.sin(t * (moving ? 6 : 2.2)) * 0.25);
+    // the trunk: a gentle sway, curled high to trumpet when attacking
+    let lift = 0;
+    if (s === 'Attack') lift = this.st < 0.55 ? this.st / 0.55 : Math.max(0, 1 - (this.st - 0.55) / 0.25);
+    this.trunk.forEach((seg, i) => {
+      seg.rotation.x = -lift * (0.55 + i * 0.12) + (i ? 0.08 : 0.25) + Math.sin(t * 2 + i * 0.6) * 0.06 * (1 - lift);
+      seg.rotation.z = Math.sin(t * 1.3 + i * 0.5) * 0.08 * (1 - lift);
+    });
+    this.head.rotation.x = -lift * 0.35;
+    this.root.position.x = s === 'Hit' && this.st < 0.4 ? Math.sin(this.st * 60) * 0.02 : 0;
+    if (s === 'Death') this.fall = Math.min(1, this.st / 1.1); else this.fall = 0;
+    this.root.rotation.z = (this.fall * this.fall) * 1.45;
+    this.root.position.y = -this.fall * 0.08;
+  }
+}
+
 // ---------- hats: so the king, queen and bishop can be told apart at a glance ----------
 const HAT_M = {
   gold: new THREE.MeshStandardMaterial({ color: 0xf3c24c, metalness: 0.9, roughness: 0.25, emissive: 0x4a3000, emissiveIntensity: 0.45 }),
@@ -636,6 +722,30 @@ export class Board3D {
     this.play(group, 'Idle', { offset: Math.random() * 3 });
     return group;
   }
+  buildElephant(color) {
+    const cfg = HERO.r, group = new THREE.Group();
+    this.heroBase(group, color, 1.04);
+    const mount = new THREE.Group();
+    mount.rotation.y = color === 'w' ? Math.PI : 0;
+    group.add(mount);
+    const ele = new ElephantRig(color);
+    ele.root.position.y = 0.13;
+    mount.add(ele.root);
+    // the monk stands in the tower, waist-deep
+    const src = this.heroTpl.r, monk = SkeletonUtils.clone(src.scene);
+    monk.scale.setScalar(0.5 / 3.1);
+    monk.position.set(0, 0.13 + 0.62, -0.02);
+    this.tintHero(monk, color);
+    ele.body.add(monk); monk.position.y = 0.73;
+    const badge = new THREE.Sprite(glyphMaterial(color, 'r'));
+    badge.scale.setScalar(0.26); badge.position.set(0.3, 0.24, 0.3);
+    group.add(badge);
+    this.mixers.add(ele);
+    const tracks = [this.track(monk, src.animations, RIDER_MAP), { proc: ele, mixer: ele }];
+    group.userData.hero = { tracks, mixer: tracks[0].mixer, model: mount, cfg, color, seat: [] };
+    this.play(group, 'Idle', { offset: Math.random() * 3 });
+    return group;
+  }
   dropHero(H) {
     if (!H) return;
     for (const t of H.tracks || [{ mixer: H.mixer }]) this.mixers.delete(t.mixer);
@@ -644,6 +754,7 @@ export class Board3D {
 
   buildHero(type, color) {
     if (type === 'n' && this.horseTpl) return this.buildKnight(color);
+    if (type === 'r') return this.buildElephant(color);
     const cfg = HERO[type], src = this.heroTpl[type];
     const group = new THREE.Group();
     this.heroBase(group, color, cfg.base || 1);
@@ -672,6 +783,7 @@ export class Board3D {
     if (!H) return 0;
     let dur = 0;
     for (const t of H.tracks) {     // a knight has two: the rider and the horse
+      if (t.proc) { const d = t.proc.play(name); if (!dur) dur = d / speed; continue; }
       const clip = t.clips[(t.map && t.map[name]) || name];
       if (!clip) continue;
       const a = t.mixer.clipAction(clip);
