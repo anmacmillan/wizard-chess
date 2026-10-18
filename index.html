@@ -77,6 +77,16 @@
     box-shadow: 0 25px 60px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 1px #000;
   }
   #board { position: relative; width: var(--bs); height: var(--bs); touch-action: none; }
+  #frame { padding: 0 !important; background: none !important; box-shadow: 0 25px 70px rgba(0,0,0,.75), 0 0 0 1px rgba(217,180,90,.35) !important; border-radius: 12px; }
+  .coach { text-align: left; padding: 10px 12px; border-radius: 12px; color: #3b2a14; font-size: 15.5px; line-height: 1.35;
+    background: radial-gradient(ellipse at 30% 20%, #f1e4c6, #d9c49a 90%); box-shadow: inset 0 0 18px rgba(120,80,30,.3); }
+  .coach b { font-family: var(--title); font-size: 14px; display: block; margin-bottom: 2px; }
+  .coach .ph { float: right; font-style: italic; font-size: 13px; opacity: .7; }
+  .hrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0 4px; }
+  .hrow button { padding: 8px 2px; border-radius: 10px; font-family: var(--title); font-size: 12px; font-weight: 700; color: var(--ink);
+    background: rgba(255,255,255,.06); border: 2px solid transparent; }
+  .hrow button.on { border-color: var(--gold); background: rgba(217,180,90,.18); }
+  .hrow .sw { display: block; height: 8px; border-radius: 4px; margin: 0 auto 4px; width: 70%; background: linear-gradient(90deg, var(--c1) 50%, var(--c2) 50%); }
   #squares { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); box-shadow: 0 0 0 2px #15110e; }
   .sq { position: relative; }
   .sq.l { background: linear-gradient(135deg, #b3ab9c 0%, #9c9587 55%, #a7a092 100%); box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), inset 2px 2px 4px rgba(255,255,255,.12); }
@@ -235,6 +245,7 @@
     <div class="icons">
       <button class="icon" data-act="sound" title="Sound">🔊</button>
       <button class="icon" data-act="voice" title="Spoken moves">🗣️</button>
+      <button class="icon" data-act="coach" title="Professor Owl">🎓</button>
       <button class="icon" data-act="log" title="Moves">📜</button>
       <button class="icon" data-act="menu" title="Menu">⚙️</button>
     </div>
@@ -242,7 +253,7 @@
   <div id="stale"></div>
   <main>
     <div class="player" id="pTop"></div>
-    <div id="frame"><div id="board"><div id="squares"></div><div id="pieces"></div></div></div>
+    <div id="frame"><div id="board"></div></div>
     <div class="player" id="pBot"></div>
     <div id="action"></div>
   </main>
@@ -293,6 +304,8 @@
   <div class="card">
     <h2>Menu</h2>
     <div class="gcode" id="gcode"></div>
+    <div class="sub" id="houseLabel" style="margin-top:4px">Your house</div>
+    <div class="hrow" id="houseRow"></div>
     <button class="btn ghost" data-act="flip">Turn the board round</button>
     <button class="btn ghost" data-act="copy">Copy the game link</button>
     <button class="btn ghost" data-act="pp" id="ppBtn"></button>
@@ -308,8 +321,10 @@
 <div id="toast"></div>
 
 <script src="firebase-config.js"></script>
+<script type="importmap">{ "imports": { "three": "./three.module.min.js" } }</script>
 <script type="module">
 import { Chess } from './chess.js';
+import { Board3D } from './board3d.js';
 
 const $ = s => document.querySelector(s);
 const HOUSES = {
@@ -333,7 +348,8 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
 };
-const prefs = Object.assign({ sound: true, voice: true, name: '', house: 'G', oppHouse: 'S' }, store.get('wc:prefs', {}));
+const prefs = Object.assign({ sound: true, voice: true, coach: true, name: '', house: 'G', oppHouse: 'S' }, store.get('wc:prefs', {}));
+const board3d = new Board3D(document.getElementById('board'), { onTap: sq => { unlockAudio(); handleTap(sq); }, sfx: (n, a) => sfx(n, a) });
 const savePrefs = () => store.set('wc:prefs', prefs);
 
 // ---------- state ----------
@@ -424,52 +440,23 @@ function loadFromHash() {
   else if (!stale) saveRec();
 }
 
-// ---------- rendering ----------
-function sqAt(row, col) {
-  const file = orient === 'w' ? col : 7 - col;
-  const rank = orient === 'w' ? 8 - row : row + 1;
-  return 'abcdefgh'[file] + rank;
-}
-function posOf(sq) {
-  const file = sq.charCodeAt(0) - 97, rank = +sq[1];
-  const col = orient === 'w' ? file : 7 - file;
-  const row = orient === 'w' ? 8 - rank : rank - 1;
-  return { left: col * 12.5 + '%', top: row * 12.5 + '%' };
-}
+// ---------- rendering: the 3D board lives in board3d.js ----------
 function kingSquare(color) {
   for (const row of chess.board()) for (const p of row) if (p && p.type === 'k' && p.color === color) return p.square;
   return null;
 }
-
 function renderSquares() {
   const targets = selected ? chess.moves({ square: selected, verbose: true }) : [];
-  const checkSq = chess.inCheck() ? kingSquare(chess.turn()) : null;
-  let html = '';
-  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-    const sq = sqAt(r, c);
-    const light = ((sq.charCodeAt(0) - 97) + +sq[1]) % 2 === 1;
-    const cls = ['sq', light ? 'l' : 'd'];
-    if (lastMove && (sq === lastMove.from || sq === lastMove.to)) cls.push('last');
-    if (sq === selected) cls.push('sel');
-    if (sq === checkSq) cls.push('check');
-    const t = targets.find(m => m.to === sq);
-    if (t) cls.push(t.captured ? 'cap' : 'dot');
-    let coords = '';
-    if (r === 7) coords += `<span class="coord f">${sq[0]}</span>`;
-    if (c === 0) coords += `<span class="coord r">${sq[1]}</span>`;
-    html += `<div class="${cls.join(' ')}" data-sq="${sq}">${coords}</div>`;
-  }
-  $('#squares').innerHTML = html;
+  board3d.setHighlights({
+    last: lastMove ? [lastMove.from, lastMove.to] : [],
+    selected,
+    targets: targets.map(m => ({ to: m.to, cap: !!m.captured })),
+    check: chess.inCheck() ? kingSquare(chess.turn()) : null,
+  });
 }
-
 function renderPieces() {
-  let html = '';
-  for (const row of chess.board()) for (const p of row) {
-    if (!p) continue;
-    const { left, top } = posOf(p.square);
-    html += `<div class="pc ${p.color}" data-sq="${p.square}" style="left:${left};top:${top}"><img src="${img(p.color, p.type)}" alt="" draggable="false"></div>`;
-  }
-  $('#pieces').innerHTML = html;
+  board3d.setOrientation(orient);
+  board3d.setPosition(chess.board());
 }
 
 function captures() {
@@ -526,6 +513,97 @@ function actionHTML() {
     <button class="btn ghost" data-act="share">🦉 Send the link to ${turnName}</button>`;
 }
 
+// ---------- Professor Owl: a tip for the player whose turn it is ----------
+const OPENINGS = [
+  ['e4 e5 Nf3 Nc6 Bc4', 'the Italian Game', 'White aims a bishop at f7, the weakest square next to Black\'s king.'],
+  ['e4 e5 Nf3 Nc6 Bb5', 'the Ruy Lopez', 'White pressures the knight that guards the e5 pawn. One of the oldest openings there is.'],
+  ['e4 e5 Nf3 Nc6 d4', 'the Scotch Game', 'White opens the centre at once to give the pieces room.'],
+  ['e4 e5 f4', 'the King\'s Gambit', 'White gives up a pawn to rush the attack. Bold and old-fashioned!'],
+  ['e4 c5', 'the Sicilian Defence', 'Black fights for the centre from the side and gets an unbalanced, fighting game.'],
+  ['e4 e6', 'the French Defence', 'Black builds a solid pawn wall and hits back with ...d5.'],
+  ['e4 c6', 'the Caro-Kann', 'A sturdy defence: Black prepares ...d5 without blocking the light-squared bishop.'],
+  ['d4 d5 c4', 'the Queen\'s Gambit', 'White offers a pawn to win control of the centre.'],
+  ['d4 Nf6 c4 g6', 'the King\'s Indian', 'Black lets White take the centre, then attacks it later.'],
+  ['e4 e5', 'an Open Game', 'Both sides put a pawn in the centre. Bring out your knights next.'],
+  ['d4 d5', 'a Closed Game', 'Pawns face each other in the centre: the game will be slower and more strategic.'],
+];
+const colourName = c => (c === 'w' ? 'White' : 'Black');
+function coachTip() {
+  const me = chess.turn(), them = other(me);
+  const hist = chess.history();
+  const ply = hist.length;
+  const pieces = chess.board().flat().filter(Boolean);
+  const big = pieces.filter(p => p.type !== 'k' && p.type !== 'p');
+  const phase = ply < 16 ? 'Opening' : (big.length <= 6 || (!pieces.some(p => p.type === 'q') && big.length <= 8)) ? 'Endgame' : 'Middlegame';
+  const S = sq => sq.toUpperCase();
+  const nm = t => NAMES[t].toLowerCase();
+  if (chess.inCheck()) return [phase, 'Check!', 'Your king is attacked. Three ways out: move the king, block the attack, or capture the attacker.'];
+  // checkmate in one?
+  for (const m of chess.moves({ verbose: true })) {
+    chess.move(m); const mate = chess.isCheckmate(); chess.undo();
+    if (mate) return [phase, 'Checkmate in one!', `There is a move that wins the game right now. Look closely at your ${nm(m.piece)}...`];
+  }
+  // a piece to win, or a piece in danger
+  let free = null, risk = null;
+  for (const p of pieces) {
+    if (p.type === 'k') continue;
+    if (p.color === them && chess.isAttacked(p.square, me)) {
+      const cheap = chess.attackers(p.square, me).some(a => VALUE[chess.get(a).type] < VALUE[p.type]);
+      if ((!chess.isAttacked(p.square, them) || cheap) && (!free || VALUE[p.type] > VALUE[free.type])) free = p;
+    }
+    if (p.color === me && chess.isAttacked(p.square, them)) {
+      const cheap = chess.attackers(p.square, them).some(a => VALUE[chess.get(a).type] < VALUE[p.type]);
+      if ((!chess.isAttacked(p.square, me) || cheap) && (!risk || VALUE[p.type] > VALUE[risk.type])) risk = p;
+    }
+  }
+  if (risk && (!free || VALUE[risk.type] >= VALUE[free.type])) return [phase, 'Watch out!', `Your ${nm(risk.type)} on ${S(risk.square)} can be taken. Move it, or protect it with another piece.`];
+  if (free) return [phase, 'A piece to win!', `${colourName(them)}'s ${nm(free.type)} on ${S(free.square)} is not safe. Can you capture it?`];
+  // guard f7 / f2 against the Scholar's Mate
+  const weak = me === 'w' ? 'f2' : 'f7';
+  if (ply < 12 && chess.attackers(weak, them).length >= 2) return [phase, `Guard ${S(weak)}!`, `Two enemy pieces are aiming at ${S(weak)}, next to your king. Defend it, or you could be checkmated quickly.`];
+  if (phase === 'Opening') {
+    const line = hist.join(' ');
+    const op = OPENINGS.find(o => (line + ' ').startsWith(o[0] + ' ') || line === o[0]);
+    if (op && ply <= op[0].split(' ').length + 3) return [phase, `This is ${op[1]}`, op[2]];
+    const home = me === 'w' ? '1' : '8';
+    const knightsHome = pieces.filter(p => p.color === me && p.type === 'n' && p.square[1] === home).length;
+    const kingHome = kingSquare(me) === 'e' + home;
+    const queenOut = !pieces.some(p => p.color === me && p.type === 'q' && p.square === 'd' + home);
+    const centre = pieces.some(p => p.color === me && p.type === 'p' && ['d4', 'e4', 'd5', 'e5'].includes(p.square));
+    if (!centre) return [phase, 'Take the centre', 'Pawns on e4 and d4 (or e5 and d5) control the middle of the board and give your pieces room.'];
+    if (queenOut && ply < 10) return [phase, 'Careful with the queen', 'Bringing her out early lets your opponent chase her around while they develop. Knights and bishops first.'];
+    if (knightsHome >= 1) return [phase, 'Knights before bishops', 'Bring your knights out towards the centre: c3 and f3 for White, c6 and f6 for Black.'];
+    if (kingHome && ply >= 8) return [phase, 'Castle soon', 'Castling tucks your king into the corner and brings a rook into the game. Clear the pieces between them first.'];
+    return [phase, 'Opening rules', 'Control the centre, develop your knights and bishops, castle, then connect your rooks.'];
+  }
+  if (phase === 'Middlegame') {
+    const tips = [
+      ['Make a plan', 'Attack where you have more pieces. Count attackers and defenders before you capture.'],
+      ['Look for forks', 'A knight or queen that attacks two pieces at once usually wins one of them.'],
+      ['Rooks love open files', 'Put your rooks on lines with no pawns, so they can reach the other side.'],
+      ['Ask "what do they want?"', 'Before every move, check what your opponent\'s last move threatens.'],
+      ['Pins and skewers', 'A piece stuck in front of its king or queen is pinned: attack it again!'],
+      ['Trade when ahead', 'If you have more pieces, swapping pieces makes your advantage easier to use.'],
+    ];
+    const t = tips[Math.floor(ply / 2) % tips.length];
+    return [phase, t[0], t[1]];
+  }
+  const tips = [
+    ['King, come out!', 'In the endgame the king is a strong piece. March it towards the centre and the pawns.'],
+    ['Push passed pawns', 'A pawn with no enemy pawns in front of it can run to the far side and become a queen.'],
+    ['Rook behind the pawn', 'Rooks belong behind passed pawns, yours or your opponent\'s.'],
+    ['The opposition', 'With only kings and pawns, standing your king face to face with theirs (one square apart) can win the race.'],
+  ];
+  const t = tips[Math.floor(ply / 2) % tips.length];
+  return [phase, t[0], t[1]];
+}
+function coachHTML() {
+  if (!prefs.coach || !G || isOver() || busy || pending || incoming) return '';
+  if (!passPlay && chess.turn() !== mySide) return '';
+  const [phase, title, text] = coachTip();
+  return `<div class="coach"><span class="ph">${phase}</span><b>🦉 Professor Owl: ${esc(title)}</b>${esc(text)}</div>`;
+}
+
 function render() {
   if (!G) return;
   renderSquares();
@@ -539,19 +617,17 @@ function renderPanels() {
   const over = isOver();
   $('#pTop').classList.toggle('turn', !over && chess.turn() === top);
   $('#pBot').classList.toggle('turn', !over && chess.turn() === bot);
-  $('#action').innerHTML = actionHTML();
+  $('#action').innerHTML = actionHTML() + coachHTML();
   document.querySelector('[data-act=sound]').classList.toggle('off', !prefs.sound);
   document.querySelector('[data-act=voice]').classList.toggle('off', !prefs.voice);
+  document.querySelector('[data-act=coach]').classList.toggle('off', !prefs.coach);
 }
 
 // ---------- playing ----------
 const canMove = () => G && !busy && !isOver() && !pending && !incoming && (passPlay || chess.turn() === mySide);
 
-$('#board').addEventListener('pointerdown', async e => {
-  unlockAudio();
-  const el = e.target.closest('.sq');
-  if (!el || !canMove()) return;
-  const sq = el.dataset.sq;
+async function handleTap(sq) {
+  if (!canMove()) return;
   const piece = chess.get(sq);
   if (selected) {
     const mv = chess.moves({ square: selected, verbose: true }).filter(m => m.to === sq);
@@ -566,7 +642,7 @@ $('#board').addEventListener('pointerdown', async e => {
   if (piece && piece.color === chess.turn()) { selected = sq === selected ? null : sq; sfx('select'); }
   else selected = null;
   renderSquares();
-});
+}
 
 async function doMove(uci, remote) {
   let mv;
@@ -576,7 +652,10 @@ async function doMove(uci, remote) {
   await animate(mv);
   busy = false;
   if (remote) incoming = null;
-  else if (!passPlay) pending = true;
+  else if (!passPlay) {
+    if (DB) { if (await dbPut()) toast('🦉 Move sent!'); else pending = true; }   // no extra Send tap
+    else pending = true;
+  }
   render();
   if (chess.isCheckmate()) toppleKing();
   speak(callout(mv));
@@ -597,99 +676,14 @@ function callout(mv) {
   return s;
 }
 
-function pieceEl(sq) { return document.querySelector(`#pieces .pc[data-sq="${sq}"]`); }
-
-function slide(el, to, ms) {
-  const { left, top } = posOf(to);
-  el.style.zIndex = 5;
-  el.style.transition = `left ${ms}ms cubic-bezier(.45,.05,.35,1), top ${ms}ms cubic-bezier(.45,.05,.35,1)`;
-  void el.offsetWidth;
-  el.style.left = left; el.style.top = top;
-  el.dataset.sq = to;
-}
-
 async function animate(mv) {
-  const el = pieceEl(mv.from);
-  if (!el) return;
-  const dx = Math.abs(mv.from.charCodeAt(0) - mv.to.charCodeAt(0));
-  const dy = Math.abs(+mv.from[1] - +mv.to[1]);
-  const ms = Math.min(700, 320 + Math.max(dx, dy) * 55);
-  const victimSq = mv.isEnPassant() ? mv.to[0] + mv.from[1] : mv.captured ? mv.to : null;
-  const victim = victimSq ? pieceEl(victimSq) : null;
-
-  sfx('slide', ms / 1000);
-  slide(el, mv.to, ms);
-  if (mv.piece === 'n') el.firstElementChild.animate(
-    [{ transform: 'scale(1)' }, { transform: 'scale(1.35) translateY(-12%)' }, { transform: 'scale(1)' }],
-    { duration: ms, easing: 'ease-in-out' });
-  if (mv.isKingsideCastle() || mv.isQueensideCastle()) {
-    const rank = mv.from[1];
-    const rook = pieceEl((mv.isKingsideCastle() ? 'h' : 'a') + rank);
-    if (rook) slide(rook, (mv.isKingsideCastle() ? 'f' : 'd') + rank, ms);
-  }
-  if (victim) { await sleep(ms * 0.78); smash(victim); await sleep(ms * 0.22 + 650); }
-  else await sleep(ms + 60);
-
-  if (mv.promotion) {
-    el.firstElementChild.src = img(mv.color, mv.promotion);
-    el.animate([{ filter: 'brightness(3) drop-shadow(0 0 12px gold)' }, { filter: 'none' }], { duration: 700 });
-    sfx('chime');
-  }
+  await board3d.animateMove(mv);
+  if (mv.promotion) sfx('chime');
   if (chess.isCheckmate()) sfx('gong');
   else if (chess.inCheck()) sfx('check');
 }
 
-// the victim breaks into stone shards
-function smash(el) {
-  const layer = $('#pieces');
-  const size = $('#board').clientWidth / 8;
-  const src = el.firstElementChild.src;
-  const color = el.classList.contains('w') ? 'w' : 'b';
-  const left = el.style.left, top = el.style.top;
-  el.remove();
-  sfx('crash');
-  $('#frame').animate([
-    { transform: 'translate(0,0)' }, { transform: 'translate(-5px,3px)' }, { transform: 'translate(5px,-3px)' },
-    { transform: 'translate(-3px,-2px)' }, { transform: 'translate(2px,2px)' }, { transform: 'translate(0,0)' }],
-    { duration: 380 });
-
-  const dust = document.createElement('div');
-  dust.className = 'dust'; dust.style.left = left; dust.style.top = top;
-  layer.appendChild(dust);
-  dust.animate([{ transform: 'scale(.4)', opacity: 1 }, { transform: 'scale(2.2)', opacity: 0 }], { duration: 700, easing: 'ease-out' }).onfinish = () => dust.remove();
-
-  // jittered 3x3 grid of points -> 9 polygon shards
-  const N = 3, P = [];
-  for (let i = 0; i <= N; i++) { P[i] = []; for (let j = 0; j <= N; j++) {
-    const edgeX = j === 0 || j === N, edgeY = i === 0 || i === N;
-    P[i][j] = [j * 100 / N + (edgeX ? 0 : (Math.random() - .5) * 18), i * 100 / N + (edgeY ? 0 : (Math.random() - .5) * 18)];
-  } }
-  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
-    const pts = [P[i][j], P[i][j + 1], P[i + 1][j + 1], P[i + 1][j]];
-    const cx = pts.reduce((s, p) => s + p[0], 0) / 4, cy = pts.reduce((s, p) => s + p[1], 0) / 4;
-    const s = document.createElement('div');
-    s.className = 'shard pc ' + color;
-    s.style.left = left; s.style.top = top;
-    s.style.clipPath = `polygon(${pts.map(p => `${p[0]}% ${p[1]}%`).join(',')})`;
-    s.innerHTML = `<img src="${src}" alt="">`;
-    layer.appendChild(s);
-    const vx = ((cx - 50) / 50) * size * (0.9 + Math.random() * 0.8) + (Math.random() - .5) * size * .4;
-    const up = size * (0.35 + Math.random() * 0.6), fall = size * (0.5 + Math.random() * 0.7);
-    const rot = (Math.random() < .5 ? -1 : 1) * (120 + Math.random() * 300);
-    s.animate([
-      { transform: 'translate(0,0) rotate(0deg)', opacity: 1 },
-      { transform: `translate(${vx * .55}px,${-up}px) rotate(${rot * .45}deg)`, opacity: 1, offset: .35 },
-      { transform: `translate(${vx}px,${fall}px) rotate(${rot}deg)`, opacity: 0 }],
-      { duration: 850 + Math.random() * 300, easing: 'cubic-bezier(.2,.6,.5,1)' }).onfinish = () => s.remove();
-  }
-}
-
-function toppleKing() {
-  const el = pieceEl(kingSquare(chess.turn()));
-  if (!el) return;
-  el.firstElementChild.animate([{ transform: 'rotate(0)' }, { transform: 'rotate(-12deg)', offset: .3 }, { transform: 'rotate(84deg) translateY(10%)' }],
-    { duration: 1100, delay: 250, easing: 'cubic-bezier(.5,0,.8,.6)', fill: 'forwards' });
-}
+function toppleKing() { board3d.topple(kingSquare(chess.turn())); }
 
 function askPromotion(color) {
   return new Promise(resolve => {
@@ -766,9 +760,10 @@ document.addEventListener('click', async e => {
       { const h = chess.history({ verbose: true }); lastMove = h[h.length - 1] || null; }
       saveRec(); render(); break;
     case 'sound': prefs.sound = !prefs.sound; savePrefs(); renderPanels(); break;
+    case 'coach': prefs.coach = !prefs.coach; savePrefs(); renderPanels(); break;
     case 'voice': prefs.voice = !prefs.voice; savePrefs(); renderPanels(); if (prefs.voice) speak('Knight to F3.'); break;
     case 'log': if (G) { showMoves(); $('#log').classList.add('show'); } break;
-    case 'menu': if (G) { resignArmed = false; menuLabels(); $('#gcode').innerHTML = DB ? `Game code <b>${esc(G.id)}</b>` : ''; $('#menu').classList.add('show'); } break;
+    case 'menu': if (G) { resignArmed = false; menuLabels(); menuHouses(); $('#gcode').innerHTML = DB ? `Game code <b>${esc(G.id)}</b>` : ''; $('#menu').classList.add('show'); } break;
     case 'close': closeAll(); break;
     case 'flip': orient = other(orient); closeAll(); render(); break;
     case 'copy': closeAll(); if (await copyText(urlOf())) toast('Link copied.'); break;
@@ -785,6 +780,19 @@ document.addEventListener('click', async e => {
       break;
     case 'new': closeAll(); history.pushState(null, '', location.pathname); G = null; showSetup(); break;
   }
+});
+function menuHouses() {
+  const side = passPlay ? chess.turn() : mySide;
+  $('#houseLabel').textContent = `${G[side].n}'s house`;
+  $('#houseRow').innerHTML = Object.entries(HOUSES).map(([k, h]) =>
+    `<button class="${G[side].h === k ? 'on' : ''}" data-house="${k}" style="--c1:${h.c1};--c2:${h.c2}"><span class="sw"></span>${h.name.slice(0, 10)}</button>`).join('');
+}
+$('#houseRow').addEventListener('click', async e => {
+  const b = e.target.closest('[data-house]'); if (!b) return;
+  const side = passPlay ? chess.turn() : mySide;
+  G[side].h = b.dataset.house;
+  menuHouses(); saveRec(); render();
+  if (DB && !passPlay) dbPut();
 });
 function menuLabels() {
   $('#ppBtn').textContent = passPlay ? 'Play by owl post instead' : 'Both players on this iPad';
@@ -910,6 +918,8 @@ function sfx(name, arg) {
       break;
     case 'check': tone(t, 110, 110, 1.0, 0.16, 'sine', 0.05); tone(t, 116.5, 116.5, 1.0, 0.16, 'sine', 0.05); tone(t, 233, 233, 0.8, 0.05, 'triangle', 0.05); break;
     case 'gong': [98, 196, 294, 392, 523].forEach((f, i) => tone(t, f, f * 0.993, 3.5 - i * 0.5, 0.22 / (i + 1), 'sine', 0.01)); noise(t, 0.3, 'bandpass', 900, 0.1); break;
+    case 'strike': noise(t, 0.16, 'highpass', 1800, 0.25); tone(t, 900, 300, 0.12, 0.08, 'sawtooth'); break;
+    case 'thud': tone(t, 70, 40, 0.4, 0.5); noise(t, 0.25, 'lowpass', 600, 0.3); break;
     case 'chime': [784, 988, 1175, 1568].forEach((f, i) => tone(t + i * 0.09, f, f, 0.6, 0.08)); break;
   }
 }
@@ -933,6 +943,7 @@ function layout() {
   let s = wide ? Math.min(H - 100, W - 380) : Math.min(W - 56, H - 320);
   s = Math.max(232, Math.floor(s / 8) * 8);
   document.documentElement.style.setProperty('--bs', s + 'px');
+  requestAnimationFrame(() => board3d.resize());
 }
 addEventListener('resize', layout);
 addEventListener('orientationchange', () => setTimeout(layout, 250));
@@ -973,6 +984,9 @@ function watch() {
   });
   es.addEventListener('patch', refresh);
 }
+setInterval(() => { if (DB && G && !passPlay && !document.hidden && !busy) refresh(); }, 4000);
+addEventListener('pageshow', () => refresh());
+addEventListener('focus', () => refresh());
 async function refresh() {
   if (!DB || !G || passPlay) return;
   const d = await dbGet(G.id);
@@ -984,6 +998,7 @@ async function onRemote(d) {
   const rm = remoteMoves(d), lm = uciList();
   if (!samePrefix(rm, lm)) return;                       // games disagree: keep ours
   if (rm.length < lm.length) { if (!pending) dbPut(); return; }   // our earlier send failed: retry
+  if (d.w && d.b && (d.w.h !== G.w.h || d.b.h !== G.b.h)) { G.w.h = HOUSES[d.w.h] ? d.w.h : G.w.h; G.b.h = HOUSES[d.b.h] ? d.b.h : G.b.h; saveRec(); renderPanels(); }
   if (rm.length === lm.length) {
     if (d.r && !G.r) { G.r = d.r; saveRec(); render(); sfx('gong'); }
     return;
@@ -1005,12 +1020,14 @@ async function boot() {
   if (DB && g) {
     const d = await dbGet(g.id);
     const rm = remoteMoves(d);
+    const p = new URLSearchParams(location.hash.slice(1));
     if (d && samePrefix(rm, g.moves) && (rm.length > g.moves.length || (d.r && !g.r))) {
       // the database is ahead of this link: open the latest position instead
-      const p = new URLSearchParams(location.hash.slice(1));
       p.set('m', rm.join('')); if (d.r) p.set('r', d.r);
-      history.replaceState(null, '', '#' + p.toString());
     }
+    // names and houses come from the shared game, so a change on one iPad shows on both
+    if (d && d.w && d.b) { p.set('wn', d.w.n); p.set('wh', d.w.h); p.set('bn', d.b.n); p.set('bh', d.b.h); }
+    history.replaceState(null, '', '#' + p.toString());
   }
   loadFromHash();
   watch();
@@ -1018,7 +1035,7 @@ async function boot() {
 
 layout();
 boot();
-window.__wc = { get chess() { return chess; }, get state() { return { mySide, orient, pending, passPlay, incoming, busy }; } };
+window.__wc = { tap: sq => handleTap(sq), get chess() { return chess; }, get state() { return { mySide, orient, pending, passPlay, incoming, busy }; } };
 </script>
 </body>
 </html>
